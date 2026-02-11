@@ -28,6 +28,12 @@ from agents.deployment_checker import (
     DeploymentCheckResult,
     DeploymentInfo,
 )
+from agents.code_checker import (
+    CodeChecker,
+    CodeAnalysisResult,
+    FileAnalysis,
+    PotentialIssue,
+)
 
 logger = get_logger(__name__)
 
@@ -65,12 +71,14 @@ class ServiceInvestigationResult:
     Attributes:
         service_name: Name of the service
         deployment_result: Result from Deployment Checker
-        code_analysis: Code analysis result (Phase 4)
+        code_analysis: Code analysis result from Code Checker
+        logger_names: Logger names found for this service (from DataDog logs)
         error: Error message if investigation failed
     """
     service_name: str
     deployment_result: Optional[DeploymentCheckResult] = None
-    code_analysis: Optional[Dict[str, Any]] = None
+    code_analysis: Optional[CodeAnalysisResult] = None
+    logger_names: Optional[Set[str]] = None
     error: Optional[str] = None
 
 
@@ -125,6 +133,7 @@ Enter issue description: """
         self.config = config
         self._datadog_retriever: Optional[DataDogRetriever] = None
         self._deployment_checker: Optional[DeploymentChecker] = None
+        self._code_checker: Optional[CodeChecker] = None
 
         # Configure logging based on config
         configure_logging(log_level=config.log_level)
@@ -150,6 +159,16 @@ Enter issue description: """
         if self._deployment_checker is None:
             self._deployment_checker = DeploymentChecker.from_config(self.config)
         return self._deployment_checker
+
+    @property
+    def code_checker(self) -> CodeChecker:
+        """Get or create the Code Checker sub-agent.
+
+        Lazily initializes the checker on first access.
+        """
+        if self._code_checker is None:
+            self._code_checker = CodeChecker.from_config(self.config)
+        return self._code_checker
 
     def collect_user_input(self) -> Optional[UserInput]:
         """Interactively collect input from the user.
@@ -356,24 +375,31 @@ Enter issue description: """
             print("  - Try expanding the time range")
             return result
 
-        # If we have services, investigate deployments
+        # If we have services, investigate deployments and code changes
         if dd_result.unique_services:
-            print("\nChecking deployments for services...")
+            print("\nChecking deployments and analyzing code for services...")
 
             # Get the search timestamp from the last search attempt
             log_search_timestamp = "now-4h"  # Default
             if dd_result.search_attempts:
                 log_search_timestamp = dd_result.search_attempts[-1].from_time
 
+            # Extract logger_names per service from the logs
+            service_logger_names = self._extract_logger_names_per_service(dd_result)
+
             # Investigate services in parallel
             service_results = self._investigate_services_parallel(
                 services=list(dd_result.unique_services),
                 log_search_timestamp=log_search_timestamp,
                 dd_versions=dd_result.unique_dd_versions,
+                service_logger_names=service_logger_names,
             )
 
-            # Display and aggregate deployment results
+            # Display deployment results
             self._display_deployment_results(service_results)
+
+            # Display code analysis results
+            self._display_code_analysis_results(service_results)
 
             # Add to result
             result["service_investigations"] = [
@@ -381,10 +407,35 @@ Enter issue description: """
                     "service_name": sr.service_name,
                     "deployments_found": len(sr.deployment_result.deployments) if sr.deployment_result else 0,
                     "deployment_status": sr.deployment_result.status if sr.deployment_result else "error",
+                    "code_analysis_status": sr.code_analysis.status if sr.code_analysis else "not_run",
+                    "code_issues_found": sr.code_analysis.total_issues_found if sr.code_analysis else 0,
                     "error": sr.error,
                 }
                 for sr in service_results
             ]
+
+            # Add code analysis results
+            result["code_analysis_results"] = {}
+            for sr in service_results:
+                if sr.code_analysis:
+                    result["code_analysis_results"][sr.service_name] = {
+                        "status": sr.code_analysis.status,
+                        "repository": sr.code_analysis.repository,
+                        "deployed_commit": sr.code_analysis.deployed_commit[:8] if sr.code_analysis.deployed_commit else None,
+                        "parent_commit": sr.code_analysis.parent_commit[:8] if sr.code_analysis.parent_commit else None,
+                        "files_analyzed": sr.code_analysis.files_analyzed,
+                        "total_issues_found": sr.code_analysis.total_issues_found,
+                        "file_analyses": [
+                            {
+                                "file_path": fa.file_path,
+                                "issues_count": len(fa.potential_issues),
+                                "summary": fa.analysis_summary,
+                                "error": fa.error,
+                            }
+                            for fa in sr.code_analysis.file_analyses
+                        ],
+                        "error": sr.code_analysis.error,
+                    }
 
             # Flatten deployment results
             for sr in service_results:
@@ -417,16 +468,19 @@ Enter issue description: """
         services: List[str],
         log_search_timestamp: str,
         dd_versions: Set[str],
+        service_logger_names: Dict[str, Set[str]],
     ) -> List[ServiceInvestigationResult]:
         """Investigate multiple services in parallel.
 
-        Uses ThreadPoolExecutor to run deployment checks for all services
-        concurrently.
+        Uses ThreadPoolExecutor to run deployment and code checks for all
+        services concurrently. Per service, deployment check runs first,
+        then code check runs (sequential within each service).
 
         Args:
             services: List of service names to investigate
             log_search_timestamp: The 'from' time from log search
             dd_versions: Set of dd.version values from logs
+            service_logger_names: Map of service name to logger names from logs
 
         Returns:
             List of ServiceInvestigationResult, one per service
@@ -444,6 +498,7 @@ Enter issue description: """
                     service_name=service,
                     log_search_timestamp=log_search_timestamp,
                     dd_versions=dd_versions,
+                    logger_names=service_logger_names.get(service, set()),
                 ): service
                 for service in services
             }
@@ -452,7 +507,7 @@ Enter issue description: """
             for future in futures:
                 service = futures[future]
                 try:
-                    result = future.result(timeout=120)  # 2 minute timeout per service
+                    result = future.result(timeout=180)  # 3 minute timeout per service
                     results.append(result)
                 except Exception as e:
                     logger.error(f"Error investigating service {service}: {e}")
@@ -468,23 +523,28 @@ Enter issue description: """
         service_name: str,
         log_search_timestamp: str,
         dd_versions: Set[str],
+        logger_names: Set[str],
     ) -> ServiceInvestigationResult:
         """Investigate a single service.
 
-        Runs Deployment Checker and (in Phase 4) Code Checker for the service.
+        Runs Deployment Checker and then Code Checker for the service.
         Code Checker runs AFTER Deployment Checker completes (sequential per service).
 
         Args:
             service_name: Name of the service to investigate
             log_search_timestamp: The 'from' time from log search
             dd_versions: Set of dd.version values from logs
+            logger_names: Set of logger names from DataDog logs for this service
 
         Returns:
             ServiceInvestigationResult with deployment and code analysis
         """
         logger.info(f"Investigating service: {service_name}")
 
-        result = ServiceInvestigationResult(service_name=service_name)
+        result = ServiceInvestigationResult(
+            service_name=service_name,
+            logger_names=logger_names,
+        )
 
         # Find matching dd_version for this service
         matching_version = None
@@ -520,14 +580,36 @@ Enter issue description: """
                 logger.error(f"Retry failed for {service_name}: {retry_e}")
                 result.error = str(retry_e)
 
-        # Step 2: Run Code Checker (Phase 4 - placeholder)
-        # Code Checker needs deployment info, so it runs sequentially after Deployment Checker
-        # This will be implemented in Phase 4
-        # if result.deployment_result and result.deployment_result.deployments:
-        #     result.code_analysis = self._run_code_checker(
-        #         service_name=service_name,
-        #         deployment_info=result.deployment_result.deployments[0],
-        #     )
+        # Step 2: Run Code Checker
+        # Code Checker needs the dd_version to get the deployed commit
+        # It runs sequentially after Deployment Checker
+        if matching_version and logger_names:
+            try:
+                code_result = self.code_checker.analyze_service(
+                    service_name=service_name,
+                    dd_version=matching_version,
+                    logger_names=logger_names,
+                )
+                result.code_analysis = code_result
+            except Exception as e:
+                logger.error(f"Code analysis failed for {service_name}: {e}")
+                # Retry once
+                try:
+                    logger.info(f"Retrying code analysis for {service_name}")
+                    code_result = self.code_checker.analyze_service(
+                        service_name=service_name,
+                        dd_version=matching_version,
+                        logger_names=logger_names,
+                    )
+                    result.code_analysis = code_result
+                except Exception as retry_e:
+                    logger.error(f"Code analysis retry failed for {service_name}: {retry_e}")
+                    # Continue without code analysis - partial result is OK
+        else:
+            logger.info(
+                f"Skipping code analysis for {service_name}: "
+                f"no dd_version={bool(matching_version)}, no logger_names={bool(logger_names)}"
+            )
 
         return result
 
@@ -654,6 +736,139 @@ Enter issue description: """
         print(f"  Services checked: {len(service_results)}")
         print(f"  Services with deployments: {services_with_deployments}")
         print(f"  Total deployments found: {total_deployments}")
+        print("=" * 60)
+
+    def _extract_logger_names_per_service(
+        self,
+        dd_result: DataDogSearchResult,
+    ) -> Dict[str, Set[str]]:
+        """Extract logger names grouped by service from DataDog logs.
+
+        Args:
+            dd_result: DataDog search result containing logs
+
+        Returns:
+            Dictionary mapping service name to set of logger names
+        """
+        service_logger_names: Dict[str, Set[str]] = {}
+
+        for log in dd_result.logs:
+            if log.service and log.logger_name:
+                if log.service not in service_logger_names:
+                    service_logger_names[log.service] = set()
+                service_logger_names[log.service].add(log.logger_name)
+
+        # Log what we found
+        for service, loggers in service_logger_names.items():
+            logger.debug(f"Service {service}: {len(loggers)} unique logger names")
+
+        return service_logger_names
+
+    def _display_code_analysis_results(
+        self,
+        service_results: List[ServiceInvestigationResult],
+    ) -> None:
+        """Display code analysis results to the user.
+
+        Args:
+            service_results: List of service investigation results
+        """
+        # Check if any service has code analysis results
+        has_code_analysis = any(sr.code_analysis for sr in service_results)
+        if not has_code_analysis:
+            return
+
+        print("\n" + "=" * 60)
+        print("Code Analysis Results")
+        print("=" * 60)
+
+        total_issues = 0
+        services_analyzed = 0
+
+        for sr in service_results:
+            print(f"\n{sr.service_name}:")
+
+            if not sr.code_analysis:
+                print("  Status: Code analysis not performed")
+                if not sr.logger_names:
+                    print("  Reason: No logger names found in logs")
+                continue
+
+            ca = sr.code_analysis
+
+            if ca.error:
+                print(f"  Status: ERROR - {ca.error}")
+                continue
+
+            if ca.status == "no_changes":
+                print("  Status: No code changes to analyze")
+                continue
+
+            services_analyzed += 1
+            print(f"  Status: {ca.status}")
+            print(f"  Repository: {ca.repository}")
+
+            if ca.deployed_commit and ca.parent_commit:
+                print(f"  Comparing: {ca.parent_commit[:8]} -> {ca.deployed_commit[:8]}")
+
+            print(f"  Files analyzed: {ca.files_analyzed}")
+            print(f"  Total issues found: {ca.total_issues_found}")
+            total_issues += ca.total_issues_found
+
+            # Show file analysis details
+            if ca.file_analyses:
+                for fa in ca.file_analyses:
+                    if fa.error:
+                        print(f"\n  File: {fa.file_path}")
+                        print(f"    Error: {fa.error}")
+                        continue
+
+                    if fa.analysis_summary:
+                        print(f"\n  File: {fa.file_path}")
+                        print(f"    Summary: {fa.analysis_summary}")
+
+                        # Show potential issues
+                        if fa.potential_issues:
+                            print("    Potential issues:")
+                            for issue in fa.potential_issues[:5]:  # Show first 5
+                                severity_marker = {
+                                    "HIGH": "[!]",
+                                    "MEDIUM": "[~]",
+                                    "LOW": "[-]",
+                                }.get(issue.severity, "[ ]")
+                                print(f"      {severity_marker} {issue.description}")
+                                if issue.code_snippet:
+                                    # Show first 3 lines of snippet
+                                    snippet_lines = issue.code_snippet.split("\n")[:3]
+                                    for line in snippet_lines:
+                                        print(f"          {line[:70]}")
+
+                            if len(fa.potential_issues) > 5:
+                                print(f"      ... and {len(fa.potential_issues) - 5} more issues")
+
+        # Summary
+        print("\n" + "-" * 40)
+        print("Code Analysis Summary:")
+        print(f"  Services analyzed: {services_analyzed}")
+        print(f"  Total potential issues: {total_issues}")
+
+        if total_issues > 0:
+            # Count by severity
+            high_count = 0
+            medium_count = 0
+            low_count = 0
+            for sr in service_results:
+                if sr.code_analysis:
+                    for fa in sr.code_analysis.file_analyses:
+                        for issue in fa.potential_issues:
+                            if issue.severity == "HIGH":
+                                high_count += 1
+                            elif issue.severity == "MEDIUM":
+                                medium_count += 1
+                            else:
+                                low_count += 1
+            print(f"    HIGH: {high_count}, MEDIUM: {medium_count}, LOW: {low_count}")
+
         print("=" * 60)
 
     def run_interactive(self) -> None:

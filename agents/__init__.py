@@ -26,6 +26,12 @@ from agents.deployment_checker import (
     DeploymentInfo,
     DeploymentCheckResult,
 )
+from agents.code_checker import (
+    CodeChecker,
+    CodeAnalysisResult,
+    FileAnalysis,
+    PotentialIssue,
+)
 
 __all__ = [
     # Main Agent
@@ -43,4 +49,9 @@ __all__ = [
     "DeploymentChecker",
     "DeploymentInfo",
     "DeploymentCheckResult",
+    # Code Checker
+    "CodeChecker",
+    "CodeAnalysisResult",
+    "FileAnalysis",
+    "PotentialIssue",
 ]
