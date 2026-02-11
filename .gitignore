@@ -38,3 +38,7 @@ build/
 # Babysiter
 /.a5c/runs
 /.a5c/node_modules
+
+# Test artifacts
+.coverage
+/.a5c/inputs-*.json
