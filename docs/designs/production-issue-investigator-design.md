@@ -826,35 +826,57 @@ When 429 response received:
 ### Key Dependencies
 
 **Dependency Management:**
-- Use `requirements.txt` with **pinned versions** for reproducibility
-- All versions locked to specific releases to prevent breaking changes
-- Update versions explicitly when needed
+- Use `requirements.txt` with **minimum version constraints** (`>=`)
+- Allows compatible updates while ensuring minimum required features
+- Project uses `uv` for dependency management (preferred over pip)
+- `uv sync` handles virtual environment and dependency installation automatically
 
 **Required packages:**
 ```
-anthropic==1.5.2                  # Claude Agent SDK
-python-dotenv==1.0.0              # Environment variable management
-requests==2.31.0                  # HTTP API calls (DataDog)
-PyGithub==2.1.1                   # GitHub API (fallback)
-python-dateutil==2.8.2            # Flexible datetime parsing
-pytz==2023.3                      # Timezone handling (Tel Aviv → UTC)
+# Claude Agent SDK and AI
+anthropic>=0.40.0                 # Anthropic Python SDK
+claude-agent-sdk>=0.1.35          # Claude Agent SDK framework
+
+# Environment management
+python-dotenv>=1.0.0              # Environment variable management
+
+# HTTP and API clients
+requests>=2.31.0                  # HTTP API calls (DataDog)
+PyGithub>=2.1.1                   # GitHub API (fallback)
+
+# Date and time utilities
+python-dateutil>=2.8.2            # Flexible datetime parsing
+pytz>=2023.3                      # Timezone handling (Tel Aviv → UTC)
 ```
 
-**Virtual Environment:**
-- Use Python's built-in `venv` module
-- Setup: `python3 -m venv venv`
-- Activate: `source venv/bin/activate` (Unix) or `venv\Scripts\activate` (Windows)
-- Install: `pip install -r requirements.txt`
+**Virtual Environment & Dependency Installation:**
+- **Recommended:** Use `uv` for automatic virtual environment and dependency management
+- Setup and run: `uv run main.py` (handles everything automatically)
+- Manual sync: `uv sync` (creates venv and installs dependencies)
+- **Alternative:** Use Python's built-in `venv` module
+  - Setup: `python3 -m venv venv`
+  - Activate: `source venv/bin/activate` (Unix) or `venv\Scripts\activate` (Windows)
+  - Install: `pip install -r requirements.txt`
 
 ### Project Structure
 ```
 production-issue-investigator/
-├── .env                          # Secrets (not in Git)
-├── .gitignore                    # Include: .env, venv/, logs/, __pycache__/
-├── requirements.txt              # Pinned dependencies
+├── .env                          # Secrets (not in Git, use .env.example as template)
+├── .env.example                  # Environment variables template
+├── .gitignore                    # Includes: .env, .venv/, logs/, __pycache__/
+├── pyproject.toml                # Project metadata and dependencies (uv)
+├── uv.lock                       # Locked dependency versions (uv)
+├── requirements.txt              # Minimum version dependencies (pip fallback)
 ├── README.md                     # Setup and usage instructions
-├── venv/                         # Virtual environment (not in Git)
+├── CLAUDE.md                     # Project-specific instructions for Claude Code
+├── AGENT_SDK_GUIDE.md            # Complete Claude Agent SDK usage guide
+├── QUICK_START.md                # Fast getting-started guide
+├── SETUP_COMPLETE.md             # Setup verification documentation
+├── ISSUE_RESOLVED.md             # Known issues and resolutions
+├── .venv/                        # Virtual environment (not in Git, created by uv)
 ├── main.py                       # Main agent entry point
+├── sre_agent_example.py          # Example SRE agent implementation
+├── verify_setup.py               # Setup verification script
 ├── agents/
 │   ├── __init__.py
 │   ├── main_agent.py            # Main orchestrator
@@ -867,6 +889,9 @@ production-issue-investigator/
 │   ├── github_helper.py         # GitHub MCP/CLI wrapper
 │   ├── time_utils.py            # Datetime parsing & conversion
 │   └── report_generator.py      # Report template renderer
+├── docs/
+│   └── designs/
+│       └── production-issue-investigator-design.md  # This document
 └── logs/
     └── agent.log                # Agent execution logs (not in Git)
 ```
@@ -1153,6 +1178,7 @@ gh api repos/sunbit-dev/card-invitation-service/contents/src/main/kotlin/com/sun
 |---------|------|---------|--------|
 | 1.0 | 2026-02-10 | Initial design complete | Design Session |
 | 2.0 | 2026-02-11 | Design verification with 12 key clarifications:<br>1. Investigation methodologies as guidance (not executable skills)<br>2. Time window retry centered on user datetime, never future<br>3. GitHub repo discovery with "-jobs" fallback<br>4. Parallel service execution, sequential Deploy→Code per service<br>5. Code comparison uses exact dd.version from error logs<br>6. Session retrieval for ALL unique efilogids<br>7. Explicit input mode selection (Mode 1 or 2)<br>8. Report methodology section only when critical<br>9. Pinned dependencies in requirements.txt<br>10. DataDog rate limit handling via X-RateLimit headers<br>11. Incremental implementation with testable phases<br>12. Multiple minor clarifications and refinements | Verification Session |
+| 2.1 | 2026-02-11 | Updated to reflect actual implementation:<br>1. Changed dependencies from pinned (`==`) to minimum versions (`>=`)<br>2. Added `claude-agent-sdk` as explicit dependency<br>3. Updated all package versions to match requirements.txt<br>4. Added `uv` as recommended dependency manager<br>5. Updated project structure to include actual files:<br>   - pyproject.toml, uv.lock (uv files)<br>   - .env.example template<br>   - Documentation files (AGENT_SDK_GUIDE.md, QUICK_START.md, etc.)<br>   - sre_agent_example.py, verify_setup.py<br>   - docs/designs/ directory structure<br>6. Changed venv to .venv (uv convention) | Implementation Update |
 
 ---
 
