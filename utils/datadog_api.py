@@ -48,6 +48,7 @@ class LogEntry:
         logger_name: Full qualified class name
         timestamp: Log timestamp
         status: Log level (info, warn, error, etc.)
+        stack_trace: Stack trace string (from error.stack, stack_trace, or exception.stacktrace)
         raw_attributes: Full raw attributes for additional access
     """
     id: str
@@ -58,6 +59,7 @@ class LogEntry:
     logger_name: Optional[str] = None
     timestamp: Optional[str] = None
     status: Optional[str] = None
+    stack_trace: Optional[str] = None
     raw_attributes: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -368,6 +370,19 @@ class DataDogAPI:
         if not dd_version:
             dd_version = nested_attrs.get("dd.version")
 
+        # Extract stack_trace from multiple possible locations
+        # Priority: error.stack > stack_trace > exception.stacktrace
+        stack_trace = None
+        error_info = nested_attrs.get("error", {})
+        if isinstance(error_info, dict) and error_info.get("stack"):
+            stack_trace = error_info.get("stack")
+        elif nested_attrs.get("stack_trace"):
+            stack_trace = nested_attrs.get("stack_trace")
+        else:
+            exception_info = nested_attrs.get("exception", {})
+            if isinstance(exception_info, dict) and exception_info.get("stacktrace"):
+                stack_trace = exception_info.get("stacktrace")
+
         return LogEntry(
             id=log_id,
             message=message,
@@ -377,6 +392,7 @@ class DataDogAPI:
             logger_name=logger_name,
             timestamp=timestamp,
             status=status,
+            stack_trace=stack_trace,
             raw_attributes=attributes,
         )
 
@@ -406,6 +422,7 @@ class DataDogAPI:
                 "logger_name": entry.logger_name,
                 "timestamp": entry.timestamp,
                 "status": entry.status,
+                "stack_trace": entry.stack_trace,
             })
 
         return extracted

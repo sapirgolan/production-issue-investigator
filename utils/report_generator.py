@@ -733,6 +733,24 @@ The investigation did not identify a clear root cause. This could be because:
         if not has_code_changes:
             sections.append("No code changes analyzed or no changes found between versions.\n")
 
+        # Stack Trace Files section
+        has_stack_trace_files = False
+        for sr in service_results:
+            stack_trace_files = sr.get("stack_trace_files", [])
+            if stack_trace_files:
+                if not has_stack_trace_files:
+                    sections.append("\n### Stack Trace Analysis\n")
+                    sections.append("Files extracted from stack traces in error logs:\n")
+                    has_stack_trace_files = True
+
+                service_name = sr.get("service_name", "unknown")
+                sections.append(f"**{service_name}**:")
+                for file_path in sorted(stack_trace_files)[:10]:
+                    sections.append(f"  - `{file_path}`")
+                if len(stack_trace_files) > 10:
+                    sections.append(f"  - *... and {len(stack_trace_files) - 10} more files*")
+                sections.append("")
+
         # Deployments section
         sections.append("\n### Deployments\n")
 

@@ -18,6 +18,7 @@ from utils.config import Config, get_config, ConfigurationError
 from utils.logger import get_logger, configure_logging
 from utils.time_utils import parse_time, tel_aviv_to_utc, UTC_TZ
 from utils.report_generator import ReportGenerator
+from utils.stack_trace_parser import extract_file_paths
 
 from agents.datadog_retriever import (
     DataDogRetriever,
@@ -74,12 +75,14 @@ class ServiceInvestigationResult:
         deployment_result: Result from Deployment Checker
         code_analysis: Code analysis result from Code Checker
         logger_names: Logger names found for this service (from DataDog logs)
+        stack_trace_files: File paths extracted from stack traces
         error: Error message if investigation failed
     """
     service_name: str
     deployment_result: Optional[DeploymentCheckResult] = None
     code_analysis: Optional[CodeAnalysisResult] = None
     logger_names: Optional[Set[str]] = None
+    stack_trace_files: Optional[Set[str]] = None
     error: Optional[str] = None
 
 
@@ -377,12 +380,16 @@ Enter issue description: """
             # Extract logger_names per service from the logs
             service_logger_names = self._extract_logger_names_per_service(dd_result)
 
+            # Extract stack trace files per service
+            service_stack_trace_files = self._extract_stack_trace_files_per_service(dd_result)
+
             # Investigate services in parallel
             service_results = self._investigate_services_parallel(
                 services=list(dd_result.unique_services),
                 log_search_timestamp=log_search_timestamp,
                 dd_versions=dd_result.unique_dd_versions,
                 service_logger_names=service_logger_names,
+                service_stack_trace_files=service_stack_trace_files,
             )
 
             # Display deployment results
@@ -474,6 +481,7 @@ Enter issue description: """
             sr_dict = {
                 "service_name": sr.service_name,
                 "logger_names": list(sr.logger_names) if sr.logger_names else [],
+                "stack_trace_files": list(sr.stack_trace_files) if sr.stack_trace_files else [],
                 "error": sr.error,
             }
 
@@ -658,6 +666,7 @@ The investigation could not be completed due to an error:
         log_search_timestamp: str,
         dd_versions: Set[str],
         service_logger_names: Dict[str, Set[str]],
+        service_stack_trace_files: Optional[Dict[str, Set[str]]] = None,
     ) -> List[ServiceInvestigationResult]:
         """Investigate multiple services in parallel.
 
@@ -670,11 +679,15 @@ The investigation could not be completed due to an error:
             log_search_timestamp: The 'from' time from log search
             dd_versions: Set of dd.version values from logs
             service_logger_names: Map of service name to logger names from logs
+            service_stack_trace_files: Map of service name to file paths from stack traces
 
         Returns:
             List of ServiceInvestigationResult, one per service
         """
         logger.info(f"Investigating {len(services)} services in parallel")
+
+        if service_stack_trace_files is None:
+            service_stack_trace_files = {}
 
         results: List[ServiceInvestigationResult] = []
 
@@ -688,6 +701,7 @@ The investigation could not be completed due to an error:
                     log_search_timestamp=log_search_timestamp,
                     dd_versions=dd_versions,
                     logger_names=service_logger_names.get(service, set()),
+                    stack_trace_files=service_stack_trace_files.get(service, set()),
                 ): service
                 for service in services
             }
@@ -713,17 +727,20 @@ The investigation could not be completed due to an error:
         log_search_timestamp: str,
         dd_versions: Set[str],
         logger_names: Set[str],
+        stack_trace_files: Optional[Set[str]] = None,
     ) -> ServiceInvestigationResult:
         """Investigate a single service.
 
         Runs Deployment Checker and then Code Checker for the service.
         Code Checker runs AFTER Deployment Checker completes (sequential per service).
+        Also analyzes files from stack traces if available.
 
         Args:
             service_name: Name of the service to investigate
             log_search_timestamp: The 'from' time from log search
             dd_versions: Set of dd.version values from logs
             logger_names: Set of logger names from DataDog logs for this service
+            stack_trace_files: Set of file paths extracted from stack traces
 
         Returns:
             ServiceInvestigationResult with deployment and code analysis
@@ -733,6 +750,7 @@ The investigation could not be completed due to an error:
         result = ServiceInvestigationResult(
             service_name=service_name,
             logger_names=logger_names,
+            stack_trace_files=stack_trace_files,
         )
 
         # Find matching dd_version for this service
@@ -800,7 +818,83 @@ The investigation could not be completed due to an error:
                 f"no dd_version={bool(matching_version)}, no logger_names={bool(logger_names)}"
             )
 
+        # Step 3: Analyze stack trace files (if any, and not already analyzed)
+        if matching_version and stack_trace_files and result.code_analysis:
+            self._analyze_stack_trace_files(
+                result=result,
+                service_name=service_name,
+                matching_version=matching_version,
+                stack_trace_files=stack_trace_files,
+            )
+
         return result
+
+    def _analyze_stack_trace_files(
+        self,
+        result: ServiceInvestigationResult,
+        service_name: str,
+        matching_version: str,
+        stack_trace_files: Set[str],
+    ) -> None:
+        """Analyze additional files from stack traces.
+
+        Deduplicates against files already analyzed via logger_names,
+        then calls code_checker.analyze_files_directly() for remaining files.
+
+        Args:
+            result: ServiceInvestigationResult to update
+            service_name: Name of the service
+            matching_version: The dd.version value
+            stack_trace_files: File paths from stack traces
+        """
+        if not result.code_analysis:
+            return
+
+        # Get files already analyzed
+        already_analyzed = set()
+        for fa in result.code_analysis.file_analyses:
+            already_analyzed.add(fa.file_path)
+
+        # Find additional files to analyze
+        additional_files = stack_trace_files - already_analyzed
+
+        if not additional_files:
+            logger.debug(f"No additional files to analyze from stack traces for {service_name}")
+            return
+
+        logger.info(f"Analyzing {len(additional_files)} additional files from stack traces for {service_name}")
+
+        # Get repository and commit info from existing code analysis
+        repository = result.code_analysis.repository
+        if not repository:
+            return
+
+        owner, repo = repository.split("/")
+        deployed_commit = result.code_analysis.deployed_commit
+        parent_commit = result.code_analysis.parent_commit
+
+        if not deployed_commit or not parent_commit:
+            return
+
+        # Analyze additional files
+        try:
+            additional_analyses = self.code_checker.analyze_files_directly(
+                owner=owner,
+                repo=repo,
+                file_paths=list(additional_files),
+                previous_commit=parent_commit,
+                current_commit=deployed_commit,
+            )
+
+            # Merge results
+            for analysis in additional_analyses:
+                result.code_analysis.file_analyses.append(analysis)
+                if not analysis.error:
+                    result.code_analysis.files_analyzed += 1
+                    result.code_analysis.total_issues_found += len(analysis.potential_issues)
+
+        except Exception as e:
+            logger.error(f"Error analyzing stack trace files for {service_name}: {e}")
 
     def _display_datadog_results(self, result: DataDogSearchResult) -> None:
         """Display DataDog search results to the user.
@@ -952,6 +1046,49 @@ The investigation could not be completed due to an error:
             logger.debug(f"Service {service}: {len(loggers)} unique logger names")
 
         return service_logger_names
+
+    def _extract_stack_trace_files_per_service(
+        self,
+        dd_result: DataDogSearchResult,
+    ) -> Dict[str, Set[str]]:
+        """Extract file paths from stack traces grouped by service.
+
+        Only processes error/warn logs, as stack traces are most relevant
+        for error cases. Parses both the dedicated stack_trace field and
+        embedded stack traces in the message field.
+
+        Args:
+            dd_result: DataDog search result containing logs
+
+        Returns:
+            Dictionary mapping service name to set of file paths
+        """
+        service_stack_files: Dict[str, Set[str]] = {}
+
+        for log in dd_result.logs:
+            # Only process error/warn logs for stack traces
+            if log.status not in ("error", "warn", "ERROR", "WARN"):
+                continue
+
+            if not log.service:
+                continue
+
+            # Extract file paths from stack_trace and message
+            file_paths = extract_file_paths(
+                stack_trace=log.stack_trace,
+                message=log.message,
+            )
+
+            if file_paths:
+                if log.service not in service_stack_files:
+                    service_stack_files[log.service] = set()
+                service_stack_files[log.service].update(file_paths)
+
+        # Log what we found
+        for service, files in service_stack_files.items():
+            logger.debug(f"Service {service}: {len(files)} unique files from stack traces")
+
+        return service_stack_files
 
     def _display_code_analysis_results(
         self,
