@@ -9,14 +9,15 @@ This is the main agent that:
 """
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 
 from utils.config import Config, get_config, ConfigurationError
 from utils.logger import get_logger, configure_logging
-from utils.time_utils import parse_time, tel_aviv_to_utc
+from utils.time_utils import parse_time, tel_aviv_to_utc, UTC_TZ
+from utils.report_generator import ReportGenerator
 
 from agents.datadog_retriever import (
     DataDogRetriever,
@@ -134,6 +135,7 @@ Enter issue description: """
         self._datadog_retriever: Optional[DataDogRetriever] = None
         self._deployment_checker: Optional[DeploymentChecker] = None
         self._code_checker: Optional[CodeChecker] = None
+        self._report_generator: Optional[ReportGenerator] = None
 
         # Configure logging based on config
         configure_logging(log_level=config.log_level)
@@ -170,6 +172,16 @@ Enter issue description: """
             self._code_checker = CodeChecker.from_config(self.config)
         return self._code_checker
 
+    @property
+    def report_generator(self) -> ReportGenerator:
+        """Get or create the report generator.
+
+        Lazily initializes the generator on first access.
+        """
+        if self._report_generator is None:
+            self._report_generator = ReportGenerator()
+        return self._report_generator
+
     def collect_user_input(self) -> Optional[UserInput]:
         """Interactively collect input from the user.
 
@@ -183,6 +195,10 @@ Enter issue description: """
         try:
             mode_input = input().strip()
         except (EOFError, KeyboardInterrupt):
+            return None
+
+        # Check for exit commands
+        if mode_input.lower() in ("exit", "quit", "q"):
             return None
 
         if mode_input == "1":
@@ -204,6 +220,9 @@ Enter issue description: """
         try:
             log_message = input().strip()
         except (EOFError, KeyboardInterrupt):
+            return None
+
+        if log_message.lower() in ("exit", "quit", "q"):
             return None
 
         if not log_message:
@@ -243,6 +262,9 @@ Enter issue description: """
         try:
             issue_description = input().strip()
         except (EOFError, KeyboardInterrupt):
+            return None
+
+        if issue_description.lower() in ("exit", "quit", "q"):
             return None
 
         print("Enter identifiers (comma-separated): ", end="")
@@ -289,33 +311,30 @@ Enter issue description: """
             parsed_datetime=parsed_datetime,
         )
 
-    def investigate(self, user_input: Optional[UserInput] = None) -> Dict[str, Any]:
-        """Investigate a production issue.
+    def investigate(self, user_input: Optional[UserInput] = None) -> str:
+        """Investigate a production issue and return a markdown report.
 
         This is the main entry point for investigations. It:
         1. Collects user input if not provided
         2. Calls the DataDog sub-agent to search logs
         3. Extracts unique services
-        4. Calls Deployment Checker for each service (in parallel)
-        5. (Phase 4) Calls Code Checker for each service
-        6. Generates investigation report
+        4. Calls Deployment Checker and Code Checker for each service (in parallel)
+        5. Generates investigation report
 
         Args:
             user_input: Pre-collected user input. If None, will prompt interactively.
 
         Returns:
-            Investigation results as a dictionary
+            Markdown-formatted investigation report string
         """
         # Collect input if not provided
         if user_input is None:
             user_input = self.collect_user_input()
             if user_input is None:
-                return {
-                    "status": "cancelled",
-                    "message": "Investigation cancelled by user",
-                }
+                return ""  # User cancelled
 
         logger.info(f"Starting investigation with mode: {user_input.mode.name}")
+        search_timestamp = datetime.now(UTC_TZ)
 
         # Execute DataDog search
         print("\nSearching DataDog logs...")
@@ -333,47 +352,18 @@ Enter issue description: """
                 )
         except Exception as e:
             logger.error(f"DataDog search failed: {e}")
-            return {
-                "status": "error",
-                "message": f"DataDog search failed: {e}",
-            }
+            # Return a minimal report with the error
+            return self._generate_error_report(user_input, str(e), search_timestamp)
 
         # Display DataDog results
         self._display_datadog_results(dd_result)
 
-        # Build result dictionary
-        result = {
-            "status": "success" if dd_result.error is None else "partial",
-            "input": {
-                "mode": user_input.mode.name,
-                "log_message": user_input.log_message,
-                "identifiers": user_input.identifiers,
-                "datetime": user_input.datetime_str,
-            },
-            "datadog_results": {
-                "total_logs": len(dd_result.logs),
-                "unique_services": list(dd_result.unique_services),
-                "unique_efilogids": len(dd_result.unique_efilogids),
-                "unique_versions": list(dd_result.unique_dd_versions),
-                "search_attempts": len(dd_result.search_attempts),
-                "efilogids_processed": dd_result.efilogids_processed,
-                "error": dd_result.error,
-            },
-            "deployment_results": {},
-            "service_investigations": [],
-        }
+        # Initialize service results list
+        service_results: List[ServiceInvestigationResult] = []
 
-        # If no logs found, provide helpful message and return
+        # If no logs found, try to provide helpful guidance
         if dd_result.error and "No logs found" in dd_result.error:
-            print("\n" + "=" * 60)
-            print("No logs found matching your search criteria.")
-            print("=" * 60)
-            print("\nSuggestions:")
-            print("  - Try a different search term or identifier")
-            print("  - Check if the datetime is correct")
-            print("  - Verify the service/team is correct (searching pod_label_team:card)")
-            print("  - Try expanding the time range")
-            return result
+            return self._handle_no_logs_found(user_input, dd_result, search_timestamp)
 
         # If we have services, investigate deployments and code changes
         if dd_result.unique_services:
@@ -401,67 +391,266 @@ Enter issue description: """
             # Display code analysis results
             self._display_code_analysis_results(service_results)
 
-            # Add to result
-            result["service_investigations"] = [
+        # Build investigation result for report generation
+        investigation_result = self._build_investigation_result(
+            user_input=user_input,
+            dd_result=dd_result,
+            service_results=service_results,
+            search_timestamp=search_timestamp,
+        )
+
+        # Generate the report
+        print("\nGenerating investigation report...")
+        report = self.report_generator.generate_report(investigation_result)
+
+        return report
+
+    def _build_investigation_result(
+        self,
+        user_input: UserInput,
+        dd_result: DataDogSearchResult,
+        service_results: List[ServiceInvestigationResult],
+        search_timestamp: datetime,
+    ) -> Dict[str, Any]:
+        """Build the investigation result dictionary for report generation.
+
+        Args:
+            user_input: User input data
+            dd_result: DataDog search result
+            service_results: List of service investigation results
+            search_timestamp: When investigation was performed
+
+        Returns:
+            Dictionary suitable for ReportGenerator.generate_report()
+        """
+        # Convert user input to dict
+        user_input_dict = {
+            "mode": user_input.mode.name,
+            "log_message": user_input.log_message,
+            "issue_description": user_input.issue_description,
+            "identifiers": user_input.identifiers,
+            "datetime": user_input.datetime_str,
+        }
+
+        # Convert DataDog result to dict
+        datadog_dict = {
+            "total_logs": len(dd_result.logs),
+            "unique_services": list(dd_result.unique_services),
+            "unique_efilogids": list(dd_result.unique_efilogids),
+            "unique_dd_versions": list(dd_result.unique_dd_versions),
+            "efilogids_found": dd_result.efilogids_found,
+            "efilogids_processed": dd_result.efilogids_processed,
+            "search_attempts": [
                 {
-                    "service_name": sr.service_name,
-                    "deployments_found": len(sr.deployment_result.deployments) if sr.deployment_result else 0,
-                    "deployment_status": sr.deployment_result.status if sr.deployment_result else "error",
-                    "code_analysis_status": sr.code_analysis.status if sr.code_analysis else "not_run",
-                    "code_issues_found": sr.code_analysis.total_issues_found if sr.code_analysis else 0,
-                    "error": sr.error,
+                    "query": sa.query,
+                    "from_time": sa.from_time,
+                    "to_time": sa.to_time,
+                    "expansion_level": sa.expansion_level,
+                    "results_count": sa.results_count,
+                    "success": sa.success,
+                    "error": sa.error,
                 }
-                for sr in service_results
-            ]
+                for sa in dd_result.search_attempts
+            ],
+            "logs": [
+                {
+                    "id": log.id,
+                    "timestamp": log.timestamp,
+                    "service": log.service,
+                    "status": log.status,
+                    "message": log.message,
+                    "logger_name": log.logger_name,
+                    "efilogid": log.efilogid,
+                    "dd_version": log.dd_version,
+                }
+                for log in dd_result.logs
+            ],
+            "error": dd_result.error,
+        }
 
-            # Add code analysis results
-            result["code_analysis_results"] = {}
-            for sr in service_results:
-                if sr.code_analysis:
-                    result["code_analysis_results"][sr.service_name] = {
-                        "status": sr.code_analysis.status,
-                        "repository": sr.code_analysis.repository,
-                        "deployed_commit": sr.code_analysis.deployed_commit[:8] if sr.code_analysis.deployed_commit else None,
-                        "parent_commit": sr.code_analysis.parent_commit[:8] if sr.code_analysis.parent_commit else None,
-                        "files_analyzed": sr.code_analysis.files_analyzed,
-                        "total_issues_found": sr.code_analysis.total_issues_found,
-                        "file_analyses": [
-                            {
-                                "file_path": fa.file_path,
-                                "issues_count": len(fa.potential_issues),
-                                "summary": fa.analysis_summary,
-                                "error": fa.error,
-                            }
-                            for fa in sr.code_analysis.file_analyses
-                        ],
-                        "error": sr.code_analysis.error,
-                    }
+        # Convert service results to dict
+        service_results_dict = []
+        for sr in service_results:
+            sr_dict = {
+                "service_name": sr.service_name,
+                "logger_names": list(sr.logger_names) if sr.logger_names else [],
+                "error": sr.error,
+            }
 
-            # Flatten deployment results
-            for sr in service_results:
-                if sr.deployment_result:
-                    result["deployment_results"][sr.service_name] = {
-                        "status": sr.deployment_result.status,
-                        "deployments": [
-                            {
-                                "timestamp": d.deployment_timestamp,
-                                "kubernetes_commit": d.kubernetes_commit_sha[:8],
-                                "app_commit": d.application_commit_hash[:8],
-                                "build_number": d.build_number,
-                                "dd_version": d.dd_version,
-                                "pr_number": d.pr_number,
-                                "changed_files_count": len(d.changed_files),
-                            }
-                            for d in sr.deployment_result.deployments
-                        ],
-                        "search_window": {
-                            "start": sr.deployment_result.search_window_start,
-                            "end": sr.deployment_result.search_window_end,
-                        },
-                        "error": sr.deployment_result.error,
-                    }
+            # Convert deployment result
+            if sr.deployment_result:
+                dr = sr.deployment_result
+                sr_dict["deployment_result"] = {
+                    "status": dr.status,
+                    "search_window_start": dr.search_window_start,
+                    "search_window_end": dr.search_window_end,
+                    "error": dr.error,
+                    "deployments": [
+                        {
+                            "deployment_timestamp": d.deployment_timestamp,
+                            "kubernetes_commit_sha": d.kubernetes_commit_sha,
+                            "application_commit_hash": d.application_commit_hash,
+                            "build_number": d.build_number,
+                            "dd_version": d.dd_version,
+                            "pr_number": d.pr_number,
+                            "changed_files": [
+                                {"filename": f.filename, "status": f.status}
+                                for f in d.changed_files
+                            ],
+                        }
+                        for d in dr.deployments
+                    ],
+                }
 
-        return result
+            # Convert code analysis result
+            if sr.code_analysis:
+                ca = sr.code_analysis
+                sr_dict["code_analysis"] = {
+                    "status": ca.status,
+                    "repository": ca.repository,
+                    "dd_version": ca.dd_version,
+                    "deployed_commit": ca.deployed_commit,
+                    "parent_commit": ca.parent_commit,
+                    "files_analyzed": ca.files_analyzed,
+                    "total_issues_found": ca.total_issues_found,
+                    "error": ca.error,
+                    "file_analyses": [
+                        {
+                            "file_path": fa.file_path,
+                            "previous_commit": fa.previous_commit,
+                            "current_commit": fa.current_commit,
+                            "diff": fa.diff,
+                            "analysis_summary": fa.analysis_summary,
+                            "error": fa.error,
+                            "potential_issues": [
+                                {
+                                    "issue_type": pi.issue_type,
+                                    "description": pi.description,
+                                    "severity": pi.severity,
+                                    "line_numbers": pi.line_numbers,
+                                    "code_snippet": pi.code_snippet,
+                                }
+                                for pi in fa.potential_issues
+                            ],
+                        }
+                        for fa in ca.file_analyses
+                    ],
+                }
+
+            service_results_dict.append(sr_dict)
+
+        return {
+            "user_input": user_input_dict,
+            "datadog_result": datadog_dict,
+            "service_results": service_results_dict,
+            "search_timestamp": search_timestamp,
+        }
+
+    def _generate_error_report(
+        self,
+        user_input: UserInput,
+        error_message: str,
+        search_timestamp: datetime,
+    ) -> str:
+        """Generate a minimal error report when investigation fails early.
+
+        Args:
+            user_input: User input data
+            error_message: The error that occurred
+            search_timestamp: When investigation was attempted
+
+        Returns:
+            Markdown error report
+        """
+        mode = user_input.mode.name
+        if mode == "LOG_MESSAGE":
+            issue_desc = user_input.log_message or "N/A"
+        else:
+            issue_desc = f"{user_input.issue_description} (IDs: {', '.join(user_input.identifiers or [])})"
+
+        return f"""# Investigation Report: Error During Investigation
+
+**Issue**: {issue_desc}
+**Investigated**: {search_timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")}
+**Status**: ERROR
+
+---
+
+## Error Details
+
+The investigation could not be completed due to an error:
+
+```
+{error_message}
+```
+
+## Recommended Actions
+
+1. Verify your API credentials are correct (DataDog API key, GitHub token)
+2. Check network connectivity to DataDog and GitHub
+3. Review the error message for specific guidance
+4. Try again with a different search query or time window
+
+---
+
+*Generated by Production Issue Investigator Agent*
+"""
+
+    def _handle_no_logs_found(
+        self,
+        user_input: UserInput,
+        dd_result: DataDogSearchResult,
+        search_timestamp: datetime,
+    ) -> str:
+        """Handle the case when no logs are found.
+
+        Provides helpful suggestions and generates a minimal report.
+
+        Args:
+            user_input: User input data
+            dd_result: DataDog search result (empty)
+            search_timestamp: When investigation was performed
+
+        Returns:
+            Markdown report with suggestions
+        """
+        print("\n" + "=" * 60)
+        print("No logs found matching your search criteria.")
+        print("=" * 60)
+        print("\nSuggestions:")
+        print("  - Try a different search term or identifier")
+        print("  - Check if the datetime is correct")
+        print("  - Verify the service/team is correct (searching pod_label_team:card)")
+        print("  - Try expanding the time range")
+
+        # Ask if user wants to try again with different input
+        print("\nWould you like to provide more context? (y/n): ", end="")
+        try:
+            response = input().strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            response = "n"
+
+        if response in ("y", "yes"):
+            print("\nPlease describe the issue in more detail or provide additional identifiers.")
+            print("Additional context: ", end="")
+            try:
+                additional_context = input().strip()
+            except (EOFError, KeyboardInterrupt):
+                additional_context = ""
+
+            if additional_context:
+                # Log the additional context for the report
+                logger.info(f"User provided additional context: {additional_context}")
+
+        # Generate a minimal report
+        investigation_result = self._build_investigation_result(
+            user_input=user_input,
+            dd_result=dd_result,
+            service_results=[],
+            search_timestamp=search_timestamp,
+        )
+
+        return self.report_generator.generate_report(investigation_result)
 
     def _investigate_services_parallel(
         self,
@@ -883,18 +1072,27 @@ Enter issue description: """
         print("  - Searching DataDog logs for errors and patterns")
         print("  - Correlating issues with recent deployments")
         print("  - Analyzing code changes between versions")
+        print("  - Generating comprehensive investigation reports")
         print("\nType 'exit' or 'quit' at any time to end the session.")
         print("Press Ctrl+C to cancel the current operation.")
         print("=" * 70 + "\n")
 
         while True:
             try:
-                result = self.investigate()
+                report = self.investigate()
 
-                if result.get("status") == "cancelled":
+                if not report:
+                    # User cancelled
                     break
 
-                print("\n" + "-" * 40)
+                # Display the report
+                print("\n" + "=" * 70)
+                print("INVESTIGATION REPORT")
+                print("=" * 70)
+                print(report)
+                print("=" * 70 + "\n")
+
+                print("-" * 40)
                 print("Investigation complete.")
                 print("-" * 40)
 
