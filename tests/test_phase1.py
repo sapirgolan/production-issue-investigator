@@ -477,7 +477,7 @@ class TestDataDogAPI(unittest.TestCase):
         client = DataDogAPI(api_key="key", app_key="key")
         query = client.build_efilogid_query("test-session-id")
 
-        self.assertEqual(query, "@efilogid:test-session-id")
+        self.assertEqual(query, '@efilogid:\\"test-session-id\\"')
 
     def test_extract_log_data(self):
         """Test extracting log data from API response."""

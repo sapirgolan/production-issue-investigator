@@ -445,5 +445,24 @@ class TestDataDogAPIExtractLogEntry(unittest.TestCase):
         self.assertEqual(entry.service, "nested-service")
 
 
+class TestDataDogAPIBuildEfilogidQuery(unittest.TestCase):
+    """Tests for build_efilogid_query method."""
+
+    def test_build_efilogid_query_escapes_value(self):
+        """Test that efilogid value is wrapped in escaped quotes."""
+        client = DataDogAPI(api_key="test-key", app_key="test-app")
+
+        efilogid = "-1-abc123"
+        query = client.build_efilogid_query(efilogid)
+
+        # Verify query starts with @efilogid:
+        self.assertTrue(query.startswith("@efilogid:"))
+
+        # Verify the efilogid value is wrapped in escaped quotes
+        # Expected format: @efilogid:\"-1-abc123\"
+        expected_query = f'@efilogid:\\"{efilogid}\\"'
+        self.assertEqual(query, expected_query)
+
+
 if __name__ == "__main__":
     unittest.main()

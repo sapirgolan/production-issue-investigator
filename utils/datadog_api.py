@@ -472,4 +472,4 @@ class DataDogAPI:
         Returns:
             Formatted query string for DataDog API
         """
-        return f"@efilogid:{efilogid}"
+        return f'@efilogid:\\"{efilogid}\\"'
