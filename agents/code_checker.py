@@ -989,6 +989,187 @@ class CodeChecker:
 
         return results
 
+    # Pattern to extract file paths and line numbers from diff
+    DIFF_HEADER_PATTERN = re.compile(r'^\+\+\+ b/(.+)$', re.MULTILINE)
+    DIFF_HUNK_PATTERN = re.compile(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@', re.MULTILINE)
+
+    def get_changed_line_numbers(self, diff: str) -> Dict[str, List[int]]:
+        """Extract changed line numbers from a unified diff.
+
+        Args:
+            diff: Unified diff string
+
+        Returns:
+            Dict mapping file path to list of changed line numbers
+        """
+        result: Dict[str, List[int]] = {}
+        current_file = None
+        current_line = 0
+
+        for line in diff.split('\n'):
+            # Check for file header
+            header_match = self.DIFF_HEADER_PATTERN.match(line)
+            if header_match:
+                current_file = header_match.group(1)
+                if current_file not in result:
+                    result[current_file] = []
+                continue
+
+            # Check for hunk header
+            hunk_match = self.DIFF_HUNK_PATTERN.match(line)
+            if hunk_match:
+                current_line = int(hunk_match.group(2))
+                continue
+
+            if current_file is None:
+                continue
+
+            # Added lines
+            if line.startswith('+') and not line.startswith('+++'):
+                result[current_file].append(current_line)
+                current_line += 1
+            elif line.startswith('-') and not line.startswith('---'):
+                # Removed lines don't increment line number
+                pass
+            else:
+                # Context line
+                current_line += 1
+
+        return result
+
+    def check_line_in_changes(
+        self,
+        line_number: int,
+        diff: str,
+        file_path: Optional[str] = None,
+        proximity: int = 5,
+    ) -> Dict[str, Any]:
+        """Check if a line number is in or near changed lines.
+
+        Args:
+            line_number: Line number to check
+            diff: Unified diff string
+            file_path: Optional file path to match (if diff has multiple files)
+            proximity: Number of lines to consider "near"
+
+        Returns:
+            Dict with:
+                - is_changed: True if line is directly changed
+                - is_near_changes: True if line is within proximity of changes
+                - nearby_lines: List of nearby changed line numbers
+        """
+        changed_lines = self.get_changed_line_numbers(diff)
+
+        # Get lines for specific file or all files
+        all_changed = []
+        if file_path and file_path in changed_lines:
+            all_changed = changed_lines[file_path]
+        else:
+            for lines in changed_lines.values():
+                all_changed.extend(lines)
+
+        is_changed = line_number in all_changed
+        nearby_lines = [
+            l for l in all_changed
+            if abs(l - line_number) <= proximity and l != line_number
+        ]
+        is_near_changes = len(nearby_lines) > 0
+
+        return {
+            "is_changed": is_changed,
+            "is_near_changes": is_near_changes,
+            "nearby_lines": nearby_lines,
+        }
+
+    def _check_exception_specific_issues(
+        self,
+        exception_type: str,
+        removed_lines: List[tuple],
+        added_lines: List[tuple],
+    ) -> List[PotentialIssue]:
+        """Check for exception-type-specific issues in code changes.
+
+        Args:
+            exception_type: Short exception type (e.g., NullPointerException)
+            removed_lines: List of (line_num, line_content) for removed lines
+            added_lines: List of (line_num, line_content) for added lines
+
+        Returns:
+            List of PotentialIssue specific to the exception type
+        """
+        issues = []
+
+        if exception_type == "NullPointerException":
+            # Check for removed null checks
+            null_check_patterns = [
+                r'if\s*\([^)]*==\s*null',
+                r'if\s*\([^)]*!=\s*null',
+                r'\?\.',  # Safe call operator
+                r'\?\:',  # Elvis operator
+                r'\.orElse\(',
+                r'\.orElseGet\(',
+                r'requireNotNull',
+                r'checkNotNull',
+            ]
+
+            for line_num, line in removed_lines:
+                for pattern in null_check_patterns:
+                    if re.search(pattern, line):
+                        issues.append(PotentialIssue(
+                            issue_type="null_check_removed",
+                            description="Null check or safe navigation was removed",
+                            severity="HIGH",
+                            line_numbers=[line_num],
+                            code_snippet=f"-{line}",
+                        ))
+                        break
+
+        elif exception_type == "IllegalStateException":
+            # Check for removed state checks
+            state_check_patterns = [
+                r'check\s*\(',
+                r'require\s*\(',
+                r'state\s*==',
+                r'\.isReady',
+                r'\.isValid',
+            ]
+
+            for line_num, line in removed_lines:
+                for pattern in state_check_patterns:
+                    if re.search(pattern, line):
+                        issues.append(PotentialIssue(
+                            issue_type="state_check_removed",
+                            description="State validation was removed",
+                            severity="HIGH",
+                            line_numbers=[line_num],
+                            code_snippet=f"-{line}",
+                        ))
+                        break
+
+        elif exception_type == "IllegalArgumentException":
+            # Check for removed argument validation
+            validation_patterns = [
+                r'require\s*\(',
+                r'check\s*\(',
+                r'if\s*\([^)]*\.isEmpty',
+                r'if\s*\([^)]*\.isBlank',
+                r'\.validate\(',
+            ]
+
+            for line_num, line in removed_lines:
+                for pattern in validation_patterns:
+                    if re.search(pattern, line):
+                        issues.append(PotentialIssue(
+                            issue_type="validation_removed",
+                            description="Input validation was removed",
+                            severity="HIGH",
+                            line_numbers=[line_num],
+                            code_snippet=f"-{line}",
+                        ))
+                        break
+
+        return issues
+
     def analyze_commit(self, repo: str, commit_sha: str) -> dict:
         """Analyze a specific commit (legacy method).
 

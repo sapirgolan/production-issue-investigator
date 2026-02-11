@@ -18,7 +18,7 @@ from utils.config import Config, get_config, ConfigurationError
 from utils.logger import get_logger, configure_logging
 from utils.time_utils import parse_time, tel_aviv_to_utc, UTC_TZ
 from utils.report_generator import ReportGenerator
-from utils.stack_trace_parser import extract_file_paths
+from utils.stack_trace_parser import extract_file_paths, StackTraceParser, ParsedStackTrace
 
 from agents.datadog_retriever import (
     DataDogRetriever,
@@ -35,6 +35,10 @@ from agents.code_checker import (
     CodeAnalysisResult,
     FileAnalysis,
     PotentialIssue,
+)
+from agents.exception_analyzer import (
+    ExceptionAnalyzer,
+    ExceptionAnalysis,
 )
 
 logger = get_logger(__name__)
@@ -76,6 +80,8 @@ class ServiceInvestigationResult:
         code_analysis: Code analysis result from Code Checker
         logger_names: Logger names found for this service (from DataDog logs)
         stack_trace_files: File paths extracted from stack traces
+        parsed_stack_traces: Parsed stack traces with exception info
+        exception_analysis: Analysis result from ExceptionAnalyzer
         error: Error message if investigation failed
     """
     service_name: str
@@ -83,6 +89,8 @@ class ServiceInvestigationResult:
     code_analysis: Optional[CodeAnalysisResult] = None
     logger_names: Optional[Set[str]] = None
     stack_trace_files: Optional[Set[str]] = None
+    parsed_stack_traces: Optional[List[ParsedStackTrace]] = None
+    exception_analysis: Optional[ExceptionAnalysis] = None
     error: Optional[str] = None
 
 
@@ -1063,7 +1071,33 @@ The investigation could not be completed due to an error:
         Returns:
             Dictionary mapping service name to set of file paths
         """
-        service_stack_files: Dict[str, Set[str]] = {}
+        # Use the new method and extract just file_paths for backwards compatibility
+        data_result = self._extract_stack_trace_data_per_service(dd_result)
+        return {
+            service: data["file_paths"]
+            for service, data in data_result.items()
+        }
+
+    def _extract_stack_trace_data_per_service(
+        self,
+        dd_result: DataDogSearchResult,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Extract file paths and parsed traces from stack traces grouped by service.
+
+        Only processes error/warn logs, as stack traces are most relevant
+        for error cases. Parses both the dedicated stack_trace field and
+        embedded stack traces in the message field.
+
+        Args:
+            dd_result: DataDog search result containing logs
+
+        Returns:
+            Dictionary mapping service name to dict with:
+                - file_paths: Set of unique file paths
+                - parsed_traces: List of ParsedStackTrace objects
+        """
+        service_stack_data: Dict[str, Dict[str, Any]] = {}
+        parser = StackTraceParser()
 
         for log in dd_result.logs:
             # Only process error/warn logs for stack traces
@@ -1073,22 +1107,35 @@ The investigation could not be completed due to an error:
             if not log.service:
                 continue
 
-            # Extract file paths from stack_trace and message
-            file_paths = extract_file_paths(
-                stack_trace=log.stack_trace,
-                message=log.message,
-            )
+            # Initialize service data if needed
+            if log.service not in service_stack_data:
+                service_stack_data[log.service] = {
+                    "file_paths": set(),
+                    "parsed_traces": [],
+                }
 
-            if file_paths:
-                if log.service not in service_stack_files:
-                    service_stack_files[log.service] = set()
-                service_stack_files[log.service].update(file_paths)
+            # Parse stack trace from dedicated field
+            if log.stack_trace:
+                parsed = parser.parse(log.stack_trace)
+                if parsed.frames:
+                    service_stack_data[log.service]["parsed_traces"].append(parsed)
+                    service_stack_data[log.service]["file_paths"].update(parsed.unique_file_paths)
+
+            # Also check for embedded stack trace in message
+            if log.message:
+                parsed = parser.parse(log.message)
+                if parsed.frames:
+                    service_stack_data[log.service]["parsed_traces"].append(parsed)
+                    service_stack_data[log.service]["file_paths"].update(parsed.unique_file_paths)
 
         # Log what we found
-        for service, files in service_stack_files.items():
-            logger.debug(f"Service {service}: {len(files)} unique files from stack traces")
+        for service, data in service_stack_data.items():
+            logger.debug(
+                f"Service {service}: {len(data['file_paths'])} unique files, "
+                f"{len(data['parsed_traces'])} parsed traces from stack traces"
+            )
 
-        return service_stack_files
+        return service_stack_data
 
     def _display_code_analysis_results(
         self,

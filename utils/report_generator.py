@@ -132,8 +132,13 @@ class ReportGenerator:
         # Services Involved
         sections.append(self._format_services_section(datadog_result, service_results))
 
-        # Root Cause Analysis
-        sections.append(self._format_root_cause_section(root_cause))
+        # Root Cause Analysis (enhanced with exception context)
+        sections.append(self._format_root_cause_section(root_cause, service_results))
+
+        # Call Flow Analysis (if exception analysis available)
+        call_flow_section = self._format_call_flow_section(service_results)
+        if call_flow_section:
+            sections.append(call_flow_section)
 
         # Evidence
         sections.append(self._format_evidence(investigation_result))
@@ -578,15 +583,23 @@ No services identified in the log search.
         logger.debug(f"Root cause analysis: identified={root_cause['identified']}, confidence={root_cause['confidence']}")
         return root_cause
 
-    def _format_root_cause_section(self, root_cause: Dict[str, Any]) -> str:
+    def _format_root_cause_section(
+        self,
+        root_cause: Dict[str, Any],
+        service_results: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """Format the root cause analysis section.
 
         Args:
             root_cause: Root cause analysis dictionary
+            service_results: Service investigation results (for exception context)
 
         Returns:
             Root cause section markdown string
         """
+        # Extract exception context if available
+        exception_context = self._extract_exception_context(service_results or [])
+
         if not root_cause.get("identified"):
             return """## Root Cause Analysis
 
@@ -639,13 +652,24 @@ The investigation did not identify a clear root cause. This could be because:
         else:
             factors_section = ""
 
+        # Format exception context if available
+        exception_section = ""
+        if exception_context:
+            exc_type = exception_context.get("exception_type", "")
+            exc_msg = exception_context.get("exception_message", "")
+            if exc_type:
+                exception_section = f"\n**Exception**: `{exc_type}`"
+                if exc_msg:
+                    exception_section += f" - {exc_msg}"
+                exception_section += "\n"
+
         return f"""## Root Cause Analysis
 
 ### Primary Cause
 **Confidence**: {confidence}
 **Service**: {service}
 **Location**: `{location}`
-
+{exception_section}
 {primary_cause}
 {snippet_section}
 {factors_section}
@@ -918,10 +942,12 @@ suspend fun processAsync(data: Data) {
             sections.append(f"**Risk**: {fix['risk']}")
             sections.append(f"**Scope**: `{file_path}`\n")
             sections.append(f"{fix['description']}\n")
+            code = fix.get('code') or "// Review the code changes"
             sections.append("```kotlin")
-            sections.append(fix['code'])
+            sections.append(code)
             sections.append("```\n")
-            sections.append(f"**Why this works**: {fix['why']}\n")
+            why = fix.get('why') or "Review the specific issue and apply the appropriate fix."
+            sections.append(f"**Why this works**: {why}\n")
 
         sections.append("---")
         return "\n".join(sections)
@@ -1141,6 +1167,102 @@ Unable to identify specific files to modify. Review the code changes and logs ma
 {notes_text}
 
 ---"""
+
+    def _extract_exception_context(
+        self,
+        service_results: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Extract exception analysis context from service results.
+
+        Args:
+            service_results: Service investigation results
+
+        Returns:
+            Exception context dict or None
+        """
+        for sr in service_results:
+            exception_analysis = sr.get("exception_analysis")
+            if exception_analysis:
+                return {
+                    "exception_type": exception_analysis.get("exception_type"),
+                    "exception_message": exception_analysis.get("exception_message"),
+                    "root_cause_explanation": exception_analysis.get("root_cause_explanation"),
+                    "call_flow": exception_analysis.get("call_flow", []),
+                    "suggested_fixes": exception_analysis.get("suggested_fixes", []),
+                    "service": sr.get("service_name"),
+                }
+        return None
+
+    def _format_call_flow_section(
+        self,
+        service_results: List[Dict[str, Any]],
+    ) -> Optional[str]:
+        """Format the call flow analysis section.
+
+        Shows the stack trace call flow with changed status for each frame.
+
+        Args:
+            service_results: Service investigation results
+
+        Returns:
+            Call flow section markdown string, or None if no call flow
+        """
+        # Find first service with exception analysis and call flow
+        exception_context = self._extract_exception_context(service_results)
+        if not exception_context:
+            return None
+
+        call_flow = exception_context.get("call_flow", [])
+        if not call_flow:
+            return None
+
+        exception_type = exception_context.get("exception_type", "Exception")
+        exception_message = exception_context.get("exception_message", "")
+
+        sections = ["## Call Flow Analysis\n"]
+
+        # Exception header
+        if exception_message:
+            sections.append(f"**Exception**: `{exception_type}`: {exception_message}\n")
+        else:
+            sections.append(f"**Exception**: `{exception_type}`\n")
+
+        # Build call flow table
+        sections.append("| Step | Class | Method | Line | Changed |")
+        sections.append("|------|-------|--------|------|---------|")
+
+        for step in call_flow:
+            step_num = step.get("step_number", "?")
+            class_name = step.get("class_name", "Unknown")
+            # Shorten class name
+            class_short = class_name.split(".")[-1] if class_name else "?"
+            method_name = step.get("method_name", "?")
+            line_number = step.get("line_number", "?")
+
+            # Determine changed status
+            is_changed = step.get("is_changed", False)
+            is_root_cause = step.get("is_root_cause", False)
+
+            changed_marker = ""
+            if is_changed:
+                changed_marker = "**YES** "
+            if is_root_cause:
+                changed_marker += "[ROOT]"
+
+            if not changed_marker:
+                changed_marker = "No"
+
+            sections.append(
+                f"| {step_num} | `{class_short}` | `{method_name}()` | {line_number} | {changed_marker} |"
+            )
+
+        # Add explanation if available
+        explanation = exception_context.get("root_cause_explanation")
+        if explanation:
+            sections.append(f"\n**Analysis**: {explanation}\n")
+
+        sections.append("\n---")
+        return "\n".join(sections)
 
     def _generate_footer(self) -> str:
         """Generate the report footer.

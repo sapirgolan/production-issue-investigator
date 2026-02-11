@@ -25,11 +25,15 @@ class StackFrame:
         method_name: Method name (e.g., handleEvent)
         file_name: Source file name (e.g., Handler.kt)
         line_number: Line number in source file (may be None)
+        index: Position in the stack trace (0 = top of stack)
+        is_root_frame: True if this is the first sunbit frame (root cause location)
     """
     class_name: str
     method_name: str
     file_name: Optional[str] = None
     line_number: Optional[int] = None
+    index: int = 0
+    is_root_frame: bool = False
 
     def to_file_path(self) -> str:
         """Convert this frame to a source file path.
@@ -66,10 +70,18 @@ class ParsedStackTrace:
         frames: All parsed stack frames
         sunbit_frames: Only frames from com.sunbit packages
         unique_file_paths: Set of unique file paths from sunbit frames
+        exception_type: Full qualified exception class (e.g., java.lang.NullPointerException)
+        exception_message: Exception message (text after colon)
+        exception_short_type: Short exception name (e.g., NullPointerException)
+        has_chained_cause: True if stack trace contains "Caused by:"
     """
     frames: List[StackFrame] = field(default_factory=list)
     sunbit_frames: List[StackFrame] = field(default_factory=list)
     unique_file_paths: Set[str] = field(default_factory=set)
+    exception_type: Optional[str] = None
+    exception_message: Optional[str] = None
+    exception_short_type: Optional[str] = None
+    has_chained_cause: bool = False
 
 
 class StackTraceParser:
@@ -92,6 +104,19 @@ class StackTraceParser:
         re.MULTILINE
     )
 
+    # Regex pattern for exception declaration line
+    # Matches: java.lang.NullPointerException: Customer not found
+    # Or: java.lang.IllegalStateException (without message)
+    EXCEPTION_PATTERN = re.compile(
+        r'^(?:Caused by:\s+)?'  # Optional "Caused by: " prefix
+        r'([\w.$]+Exception|[\w.$]+Error)'  # Exception class (group 1)
+        r'(?::\s*(.*))?$',  # Optional message (group 2)
+        re.MULTILINE
+    )
+
+    # Pattern to detect chained cause
+    CAUSED_BY_PATTERN = re.compile(r'^Caused by:', re.MULTILINE)
+
     # Package prefix to filter on
     SUNBIT_PREFIX = "com.sunbit"
 
@@ -111,6 +136,13 @@ class StackTraceParser:
         sunbit_frames: List[StackFrame] = []
         unique_paths: Set[str] = set()
 
+        # Extract exception info
+        exception_type, exception_message, exception_short_type = self._extract_exception_info(stack_trace)
+
+        # Check for chained cause
+        has_chained_cause = bool(self.CAUSED_BY_PATTERN.search(stack_trace))
+
+        frame_index = 0
         for match in self.FRAME_PATTERN.finditer(stack_trace):
             class_name = match.group(1)
             method_name = match.group(2)
@@ -134,11 +166,17 @@ class StackTraceParser:
                 method_name=method_name,
                 file_name=file_name,
                 line_number=line_number,
+                index=frame_index,
+                is_root_frame=False,
             )
             frames.append(frame)
+            frame_index += 1
 
             # Check if this is a sunbit package
             if class_name.startswith(self.SUNBIT_PREFIX):
+                # Mark first sunbit frame as root frame
+                if not sunbit_frames:
+                    frame.is_root_frame = True
                 sunbit_frames.append(frame)
                 file_path = frame.to_file_path()
                 unique_paths.add(file_path)
@@ -154,7 +192,35 @@ class StackTraceParser:
             frames=frames,
             sunbit_frames=sunbit_frames,
             unique_file_paths=unique_paths,
+            exception_type=exception_type,
+            exception_message=exception_message,
+            exception_short_type=exception_short_type,
+            has_chained_cause=has_chained_cause,
         )
+
+    def _extract_exception_info(
+        self,
+        stack_trace: str,
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """Extract exception type and message from stack trace.
+
+        Args:
+            stack_trace: The stack trace string
+
+        Returns:
+            Tuple of (exception_type, exception_message, exception_short_type)
+        """
+        match = self.EXCEPTION_PATTERN.search(stack_trace)
+        if not match:
+            return None, None, None
+
+        exception_type = match.group(1)
+        exception_message = match.group(2) if match.group(2) else None
+
+        # Extract short type (e.g., NullPointerException from java.lang.NullPointerException)
+        exception_short_type = exception_type.split(".")[-1] if exception_type else None
+
+        return exception_type, exception_message, exception_short_type
 
 
 def extract_file_paths(
