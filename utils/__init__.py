@@ -20,6 +20,7 @@ from utils.time_utils import (
     datetime_to_iso8601,
     calculate_time_window,
     expand_time_window,
+    get_deployment_window_start,
 )
 from utils.datadog_api import (
     DataDogAPI,
@@ -29,6 +30,16 @@ from utils.datadog_api import (
     DataDogAuthError,
     DataDogRateLimitError,
     DataDogTimeoutError,
+)
+from utils.github_helper import (
+    GitHubHelper,
+    GitHubError,
+    GitHubAuthError,
+    GitHubNotFoundError,
+    GitHubRateLimitError,
+    CommitInfo,
+    PullRequestInfo,
+    FileChange,
 )
 
 __all__ = [
@@ -49,6 +60,7 @@ __all__ = [
     "datetime_to_iso8601",
     "calculate_time_window",
     "expand_time_window",
+    "get_deployment_window_start",
     # DataDog API
     "DataDogAPI",
     "LogEntry",
@@ -57,4 +69,13 @@ __all__ = [
     "DataDogAuthError",
     "DataDogRateLimitError",
     "DataDogTimeoutError",
+    # GitHub Helper
+    "GitHubHelper",
+    "GitHubError",
+    "GitHubAuthError",
+    "GitHubNotFoundError",
+    "GitHubRateLimitError",
+    "CommitInfo",
+    "PullRequestInfo",
+    "FileChange",
 ]
