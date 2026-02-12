@@ -191,6 +191,10 @@ class DataDogAPI:
             DataDogTimeoutError: If request times out
             DataDogAPIError: For other API errors
         """
+        # Log HTTP request
+        self._log_http_request(method, url, kwargs)
+
+        start_time = time.time()
         try:
             response = requests.request(
                 method,
@@ -199,6 +203,12 @@ class DataDogAPI:
                 timeout=self.timeout,
                 **kwargs,
             )
+
+            # Calculate elapsed time
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            # Log HTTP response
+            self._log_http_response(response, elapsed_ms)
 
             # Update rate limit tracking from headers
             self._update_rate_limit_info(response)
@@ -237,6 +247,102 @@ class DataDogAPI:
         except requests.RequestException as e:
             logger.error(f"DataDog API request failed: {e}")
             raise DataDogAPIError(f"API request failed: {e}")
+
+    def _redact_sensitive_headers(self, headers: Dict[str, str]) -> Dict[str, str]:
+        """Redact sensitive information from headers for logging.
+
+        Args:
+            headers: Headers dictionary
+
+        Returns:
+            Dictionary with sensitive values redacted
+        """
+        redacted = headers.copy()
+        sensitive_keys = ["DD-API-KEY", "DD-APPLICATION-KEY", "Authorization"]
+
+        for key in sensitive_keys:
+            if key in redacted:
+                redacted[key] = "***REDACTED***"
+
+        return redacted
+
+    def _truncate_body(self, body: Any, max_length: int = 1000) -> str:
+        """Truncate body content for logging.
+
+        Args:
+            body: Body content (dict, str, bytes, etc.)
+            max_length: Maximum length before truncation
+
+        Returns:
+            Truncated string representation
+        """
+        if body is None:
+            return ""
+
+        if isinstance(body, dict):
+            body_str = str(body)
+        elif isinstance(body, bytes):
+            body_str = body.decode("utf-8", errors="replace")
+        else:
+            body_str = str(body)
+
+        if len(body_str) > max_length:
+            return body_str[:max_length] + f"... (truncated, total: {len(body_str)} chars)"
+
+        return body_str
+
+    def _log_http_request(self, method: str, url: str, kwargs: Dict[str, Any]) -> None:
+        """Log HTTP request details.
+
+        Args:
+            method: HTTP method
+            url: Request URL
+            kwargs: Request arguments
+        """
+        # Extract body from kwargs
+        body = kwargs.get("json") or kwargs.get("data")
+        body_size = len(str(body)) if body else 0
+
+        # DEBUG: Full details with redacted headers
+        redacted_headers = self._redact_sensitive_headers(self.headers)
+        body_content = self._truncate_body(body)
+
+        logger.debug(
+            f"[HTTP_REQ] method={method} url={url} "
+            f"headers={redacted_headers} body={body_content}"
+        )
+
+        # INFO: Summary
+        logger.info(
+            f"[HTTP_REQ] {method} {url} body_size={body_size}B"
+        )
+
+    def _log_http_response(self, response: requests.Response, elapsed_ms: int) -> None:
+        """Log HTTP response details.
+
+        Args:
+            response: HTTP response object
+            elapsed_ms: Elapsed time in milliseconds
+        """
+        # Get response body size (handle Mock objects in tests)
+        try:
+            body_size = len(response.content) if hasattr(response, 'content') else 0
+            body_content = self._truncate_body(response.content) if hasattr(response, 'content') else ""
+        except (TypeError, AttributeError):
+            body_size = 0
+            body_content = ""
+
+        # DEBUG: Full details
+        logger.debug(
+            f"[HTTP_RESP] status={response.status_code} "
+            f"headers={dict(response.headers)} body={body_content}"
+        )
+
+        # INFO: Summary
+        logger.info(
+            f"[HTTP_RESP] status={response.status_code} "
+            f"timing={elapsed_ms}ms body_size={body_size}B"
+        )
 
     def _update_rate_limit_info(self, response: requests.Response) -> None:
         """Update rate limit tracking from response headers.

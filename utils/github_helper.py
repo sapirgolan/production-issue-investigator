@@ -150,6 +150,75 @@ class GitHubHelper:
         """
         return cls(token=config.github_token)
 
+    def _redact_sensitive_env(self, cmd: List[str]) -> List[str]:
+        """Redact sensitive information from command for logging.
+
+        Args:
+            cmd: Command list
+
+        Returns:
+            Command list with no changes (env vars not shown in cmd)
+        """
+        # The token is passed via environment variable, not in the command itself
+        # So we don't need to redact the command. This method is for consistency.
+        return cmd
+
+    def _truncate_output(self, output: str, max_length: int = 1000) -> str:
+        """Truncate output for logging.
+
+        Args:
+            output: Output string
+            max_length: Maximum length before truncation
+
+        Returns:
+            Truncated string
+        """
+        if not output:
+            return ""
+
+        if len(output) > max_length:
+            return output[:max_length] + f"... (truncated, total: {len(output)} chars)"
+
+        return output
+
+    def _log_cli_request(self, cmd: List[str], endpoint: str) -> None:
+        """Log GitHub CLI request details.
+
+        Args:
+            cmd: Command list
+            endpoint: API endpoint
+        """
+        # DEBUG: Full command (token is in env, not in cmd)
+        logger.debug(f"[GH_CLI_REQ] command={' '.join(cmd)} endpoint={endpoint}")
+
+        # INFO: Summary
+        logger.info(f"[GH_CLI_REQ] endpoint={endpoint}")
+
+    def _log_cli_response(self, result: subprocess.CompletedProcess, elapsed_ms: int) -> None:
+        """Log GitHub CLI response details.
+
+        Args:
+            result: Completed process result
+            elapsed_ms: Elapsed time in milliseconds
+        """
+        stdout_size = len(result.stdout) if result.stdout else 0
+        stderr_size = len(result.stderr) if result.stderr else 0
+
+        stdout_content = self._truncate_output(result.stdout)
+        stderr_content = self._truncate_output(result.stderr)
+
+        # DEBUG: Full output
+        logger.debug(
+            f"[GH_CLI_RESP] returncode={result.returncode} "
+            f"stdout={stdout_content} stderr={stderr_content}"
+        )
+
+        # INFO: Summary
+        logger.info(
+            f"[GH_CLI_RESP] status={result.returncode} "
+            f"timing={elapsed_ms}ms stdout_size={stdout_size}B stderr_size={stderr_size}B"
+        )
+
     def _check_cli_available(self) -> bool:
         """Check if the GitHub CLI is available and authenticated.
 
@@ -206,12 +275,16 @@ class GitHubHelper:
         if data:
             cmd.extend(["-f", json.dumps(data)])
 
-        logger.debug(f"Running gh api: {endpoint}")
+        # Log CLI request
+        self._log_cli_request(cmd, endpoint)
 
-        # Set up environment with token
+        # Set up environment with token (redacted in logs)
         env = os.environ.copy()
         if self.token:
             env["GITHUB_TOKEN"] = self.token
+
+        import time
+        start_time = time.time()
 
         try:
             result = subprocess.run(
@@ -221,6 +294,12 @@ class GitHubHelper:
                 timeout=60,
                 env=env,
             )
+
+            # Calculate elapsed time
+            elapsed_ms = int((time.time() - start_time) * 1000)
+
+            # Log CLI response
+            self._log_cli_response(result, elapsed_ms)
 
             if result.returncode != 0:
                 error_msg = result.stderr.strip()
