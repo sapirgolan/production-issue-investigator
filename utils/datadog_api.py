@@ -161,7 +161,7 @@ class DataDogAPI:
             "sort": "-timestamp",  # Most recent first
         }
 
-        logger.info(f"Searching DataDog logs: query='{query}', from={from_time}, to={to_time}")
+        logger.info(f"Searching DataDog logs (UTC): query='{query}', from={from_time}, to={to_time}")
         logger.debug(f"Full request body: {request_body}")
 
         response = self._make_request("POST", url, json=request_body)

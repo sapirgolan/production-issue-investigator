@@ -354,7 +354,7 @@ class DataDogRetriever:
         )
 
         time_range_display = format_time_range_for_display(from_time, to_time)
-        logger.info(f"Executing search (level {expansion_level}): {time_range_display}")
+        logger.info(f"Executing search (level {expansion_level}) - Display timezone: {time_range_display}")
         logger.debug(f"Query: {query}")
 
         try:
