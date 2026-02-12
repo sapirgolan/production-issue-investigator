@@ -39,6 +39,42 @@ uv lock --upgrade
 uv sync
 ```
 
+### Testing
+```bash
+# Run all tests
+uv run python -m pytest tests/ -v
+
+# Run specific test file
+uv run python -m pytest tests/test_datadog_api_coverage.py -v
+
+# Run specific test class
+uv run python -m pytest tests/test_http_logging.py::TestDataDogAPIHTTPLogging -v
+
+# Run specific test method
+uv run python -m pytest tests/test_http_logging.py::TestDataDogAPIHTTPLogging::test_http_request_logged_at_debug -v
+
+# Run with coverage
+uv run python -m pytest tests/ --cov=utils --cov=agents --cov-report=term-missing
+
+# Run with specific coverage threshold
+uv run python -m pytest tests/ --cov=utils/datadog_api --cov-report=term-missing
+```
+
+### Logging
+```bash
+# Run with DEBUG logs (shows full HTTP bodies and CLI commands)
+LOG_LEVEL=DEBUG uv run main.py
+
+# Run with INFO logs (default - shows summaries only)
+LOG_LEVEL=INFO uv run main.py
+
+# View logs in real-time
+tail -f logs/agent.log
+
+# Filter logs by type
+grep -E '\[HTTP_REQ\]|\[HTTP_RESP\]|\[GH_CLI' logs/agent.log
+```
+
 ### Python Requirements
 - **Minimum**: Python 3.10 (Claude Agent SDK requirement)
 - **Current**: Python 3.14.2 (tested and working)
@@ -92,6 +128,31 @@ Aggregate results → Generate investigation report
 
 ## Key Technical Details
 
+### Logging Infrastructure
+
+**Output Locations:**
+- **File**: `logs/agent.log` (rotating, 10MB max, 5 backups)
+- **Console**: Stdout/stderr (same format)
+
+**Log Levels:**
+- **DEBUG**: Full details with complete HTTP bodies, CLI stdout/stderr, all headers (redacted)
+- **INFO**: Summaries with timing, sizes, status codes
+
+**Log Format:**
+```
+[2026-02-12 09:37:05,485] [utils.datadog_api] [INFO] [HTTP_REQ] POST https://... body_size=109B
+[2026-02-12 09:37:05,993] [utils.github_helper] [INFO] [GH_CLI_RESP] status=0 timing=507ms stdout_size=5598B
+```
+
+**Structured Tags:**
+- `[HTTP_REQ]` - DataDog API HTTP request
+- `[HTTP_RESP]` - DataDog API HTTP response
+- `[GH_CLI_REQ]` - GitHub CLI command
+- `[GH_CLI_RESP]` - GitHub CLI result
+
+**Sensitive Data Redaction:**
+All API keys, tokens, and Authorization headers are automatically redacted with `***REDACTED***`.
+
 ### Timezone Handling
 - **Default user timezone**: Tel Aviv (Asia/Jerusalem)
 - **DataDog API**: Always use UTC timestamps
@@ -129,6 +190,16 @@ When 429 received:
 3. Wait until reset
 4. Retry request once
 
+### DataDog Query Escaping
+**Important**: When querying by efilogid, the value must be wrapped in escaped quotes:
+```python
+# Correct format
+query = '@efilogid:\"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl\"'
+
+# Wrong format (will not match)
+query = '@efilogid:-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl'
+```
+
 ## Environment Configuration
 
 Required in `.env`:
@@ -145,7 +216,7 @@ DATADOG_SITE=datadoghq.com
 GITHUB_TOKEN=ghp_...
 
 # Application
-LOG_LEVEL=INFO
+LOG_LEVEL=INFO  # Use DEBUG for full HTTP/CLI logs
 TIMEZONE=Asia/Tel_Aviv
 ```
 
@@ -199,6 +270,20 @@ The agent generates Markdown reports with:
 
 ## Testing Strategy
 
+### Test Structure
+Tests are organized by module:
+- `tests/test_datadog_api_coverage.py` - DataDog API wrapper tests
+- `tests/test_http_logging.py` - HTTP and CLI logging tests (26 tests)
+- `tests/test_phase1.py` - Phase 1 foundation tests
+- `tests/test_stack_trace.py` - Stack trace parsing and analysis tests
+- `tests/test_exception_analyzer.py` - Exception analysis tests
+- `tests/test_report_generator_coverage.py` - Report generation tests
+
+### Coverage Requirements
+- **Utils modules**: Aim for 100% coverage (critical infrastructure)
+- **Agent modules**: Aim for 80%+ coverage
+- **Integration points**: All external API calls must be tested with mocks
+
 ### Phase-Based Development
 The design document (see `docs/designs/production-issue-investigator-design.md`) outlines 5 implementation phases:
 
@@ -226,6 +311,7 @@ Each phase has specific deliverables and test scenarios.
 4. **Don't parallelize deployment→code checks per service**: Code Checker needs deployment info first
 5. **Don't retry infinitely on rate limits**: Wait for X-RateLimit-Reset, retry once, then fail gracefully
 6. **Don't expand time window into the future**: When user provides datetime, never search beyond current time
+7. **Don't forget query escaping**: efilogid queries must have escaped quotes around the value
 
 ## Project-Specific Constraints
 
@@ -247,6 +333,18 @@ Always include in queries:
 - Kubernetes configs: `sunbit-dev/kubernetes`
 - Application repos: `sunbit-dev/{service-name}`
 - All repos are private (requires GITHUB_TOKEN)
+
+## Babysitter Workflows
+
+The project uses babysitter orchestration for complex TDD workflows (`.a5c/processes/`):
+- `add-http-logging.js` - TDD workflow for adding HTTP/CLI logging
+- `efilogid-escape-fix.js` - TDD workflow for query escaping fixes
+
+These processes demonstrate quality-gated iterative development with:
+- Test-first development
+- Quality convergence loops (target: 85-90%)
+- Integration testing
+- User approval breakpoints
 
 ## Additional Documentation
 
