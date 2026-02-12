@@ -191,14 +191,19 @@ When 429 received:
 4. Retry request once
 
 ### DataDog Query Escaping
-**Important**: When querying by efilogid, the value must be wrapped in escaped quotes:
+**Important**: When querying by efilogid, the value must be wrapped in quotes:
 ```python
-# Correct format
-query = '@efilogid:\"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl\"'
+# Correct format (Python string with quotes)
+query = '@efilogid:"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl"'
 
-# Wrong format (will not match)
+# When JSON serialized by requests library, becomes:
+# @efilogid:\"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl\"
+
+# Wrong format (no quotes - will not match)
 query = '@efilogid:-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl'
 ```
+
+**Note**: Do NOT manually escape quotes in the Python string (e.g., `\\"value\\"`). The `requests` library's `json` parameter automatically handles proper JSON escaping when serializing the request body.
 
 ## Environment Configuration
 

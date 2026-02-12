@@ -572,10 +572,14 @@ class DataDogAPI:
     def build_efilogid_query(self, efilogid: str) -> str:
         """Build a DataDog query for searching by efilogid.
 
+        The efilogid value must be wrapped in quotes for DataDog query syntax.
+        When this string is JSON-serialized by requests, the quotes will be
+        properly escaped in the HTTP payload.
+
         Args:
             efilogid: The session identifier
 
         Returns:
             Formatted query string for DataDog API
         """
-        return f'@efilogid:\\"{efilogid}\\"'
+        return f'@efilogid:"{efilogid}"'

@@ -471,13 +471,17 @@ class TestDataDogAPI(unittest.TestCase):
         self.assertIn(" OR ", query)
 
     def test_build_efilogid_query(self):
-        """Test building query for efilogid search."""
+        """Test building query for efilogid search.
+
+        The query should wrap the efilogid in quotes (unescaped in Python).
+        When JSON-serialized, these quotes will be properly escaped.
+        """
         from utils.datadog_api import DataDogAPI
 
         client = DataDogAPI(api_key="key", app_key="key")
         query = client.build_efilogid_query("test-session-id")
 
-        self.assertEqual(query, '@efilogid:\\"test-session-id\\"')
+        self.assertEqual(query, '@efilogid:"test-session-id"')
 
     def test_extract_log_data(self):
         """Test extracting log data from API response."""

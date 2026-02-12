@@ -449,7 +449,13 @@ class TestDataDogAPIBuildEfilogidQuery(unittest.TestCase):
     """Tests for build_efilogid_query method."""
 
     def test_build_efilogid_query_escapes_value(self):
-        """Test that efilogid value is wrapped in escaped quotes."""
+        """Test that efilogid value is wrapped in quotes.
+
+        The quotes will be properly escaped during JSON serialization
+        by the requests library. The Python string should contain
+        unescaped quotes, which will become escaped quotes in the
+        JSON HTTP payload.
+        """
         client = DataDogAPI(api_key="test-key", app_key="test-app")
 
         efilogid = "-1-abc123"
@@ -458,9 +464,9 @@ class TestDataDogAPIBuildEfilogidQuery(unittest.TestCase):
         # Verify query starts with @efilogid:
         self.assertTrue(query.startswith("@efilogid:"))
 
-        # Verify the efilogid value is wrapped in escaped quotes
-        # Expected format: @efilogid:\"-1-abc123\"
-        expected_query = f'@efilogid:\\"{efilogid}\\"'
+        # Verify the efilogid value is wrapped in quotes (unescaped in Python string)
+        # Expected format: @efilogid:"-1-abc123"
+        expected_query = f'@efilogid:"{efilogid}"'
         self.assertEqual(query, expected_query)
 
 
