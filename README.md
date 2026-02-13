@@ -1,22 +1,51 @@
 # Production Issue Investigator
 
-An AI-powered agent for investigating production issues using Claude Agent SDK, DataDog, and GitHub.
+An AI-powered agent for investigating production issues using **Claude Agent SDK**, DataDog, and GitHub.
 
-## Features
+## Architecture Overview
 
-- **Main Orchestrator Agent**: Coordinates the investigation process
-- **DataDog Retriever Sub-Agent**: Fetches logs and metrics from DataDog
-- **Deployment Checker Sub-Agent**: Checks recent deployments and releases
-- **Code Checker Sub-Agent**: Analyzes code changes and commits
+This project uses the **Claude Agent SDK** with true AI-powered orchestration:
+
+```
+                    ┌─────────────────┐
+                    │   Lead Agent    │
+                    │  (query() SDK)  │
+                    └────────┬────────┘
+                             │
+           ┌─────────────────┼─────────────────┐
+           │                 │                 │
+           ▼                 ▼                 ▼
+┌──────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│     datadog-     │ │  deployment- │ │     code-        │
+│   investigator   │ │   analyzer   │ │    reviewer      │
+│    (haiku)       │ │   (haiku)    │ │    (sonnet)      │
+└──────────────────┘ └──────────────┘ └──────────────────┘
+           │                 │                 │
+           └─────────────────┴─────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────────┐
+              │        MCP Tools             │
+              │  - DataDog (search, logs)    │
+              │  - GitHub (commits, diffs)   │
+              └──────────────────────────────┘
+```
+
+**Key Features:**
+- **Lead Agent**: Uses `query()` with `ClaudeAgentOptions` for AI reasoning
+- **True Subagents**: AI agents with prompts, tools, and autonomous reasoning
+- **Custom MCP Tools**: DataDog and GitHub APIs as MCP tools
+- **Hook-based Observability**: Comprehensive tracking of all tool usage
+- **Session Management**: Persistent transcripts and tool call logs
 
 ## Requirements
 
-- Python 3.9 or higher
+- Python 3.10 or higher (Claude Agent SDK requirement)
 - UV (recommended) or pip for dependency management
 - API keys for:
   - Anthropic (Claude)
   - DataDog
-  - GitHub (optional)
+  - GitHub
 
 ## Installation
 
@@ -32,13 +61,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-Then run the project directly with UV (it will automatically set up a virtual environment and install dependencies):
+Then run the project directly with UV:
 
 ```bash
-# Run directly with UV
+# Run directly with UV (handles venv and dependencies automatically)
 uv run main.py
 
-# Or sync dependencies and run
+# Or sync dependencies first
 uv sync
 uv run main.py
 ```
@@ -71,65 +100,131 @@ python main.py
 
 2. Edit `.env` and add your API keys:
    ```bash
+   # Required
    ANTHROPIC_API_KEY=your_api_key_here
    DATADOG_API_KEY=your_datadog_api_key
    DATADOG_APP_KEY=your_datadog_app_key
    GITHUB_TOKEN=your_github_token_here
+
+   # Optional
+   LOG_LEVEL=INFO
+   TIMEZONE=Asia/Tel_Aviv
    ```
 
 ## Project Structure
 
 ```
 production-issue-investigator/
-├── main.py                      # Main entry point
-├── agents/                      # Agent modules
-│   ├── main_agent.py           # Main orchestrator
-│   ├── datadog_retriever.py    # DataDog sub-agent
-│   ├── deployment_checker.py   # Deployment sub-agent
-│   └── code_checker.py         # Code sub-agent
-├── utils/                       # Utility modules
-│   ├── datadog_api.py          # DataDog API wrapper
-│   ├── github_helper.py        # GitHub helper
-│   ├── time_utils.py           # Time utilities
-│   └── report_generator.py     # Report generation
-├── logs/                        # Application logs
-├── requirements.txt             # Python dependencies
-├── pyproject.toml              # Project metadata for UV
-├── .env                         # Environment variables (not in git)
-└── .env.example                # Example environment file
+├── main.py                      # Main entry point (SDK version)
+├── main_legacy.py               # Legacy entry point (deprecated)
+├── agents/
+│   ├── lead_agent.py            # SDK orchestrator with query()
+│   ├── subagent_definitions.py  # AgentDefinition instances
+│   ├── datadog_investigator_prompt.py
+│   ├── deployment_analyzer_prompt.py
+│   └── code_reviewer_prompt.py
+├── mcp_servers/
+│   ├── datadog_server.py        # DataDog MCP tools
+│   └── github_server.py         # GitHub MCP tools
+├── utils/
+│   ├── session_manager.py       # Session directory management
+│   ├── hooks.py                 # Tool usage tracking
+│   ├── datadog_api.py           # DataDog API wrapper
+│   ├── github_helper.py         # GitHub API wrapper
+│   └── config.py                # Configuration
+├── logs/
+│   └── session_YYYYMMDD_HHMMSS/ # Session directories
+│       ├── transcript.txt       # Human-readable log
+│       ├── tool_calls.jsonl     # Machine-readable log
+│       └── investigation_report.md
+└── tests/                       # Test suite
 ```
 
 ## Usage
 
-### Basic Usage
+### Interactive Mode
 
 ```bash
-# Using UV
+# Using UV (recommended)
 uv run main.py
 
 # Using Python directly
 python main.py
 ```
 
-### Development
+The agent will prompt you to describe the issue:
 
-The project follows these conventions:
-- All dependencies are pinned to specific versions in `requirements.txt`
-- Timezone conversion utilities for Tel Aviv ↔ UTC
-- Structured logging to `logs/agent.log`
-- Environment variables loaded from `.env`
+```
+======================================================================
+         Production Issue Investigator (SDK Version)
+======================================================================
+
+Investigate production issues using AI-powered analysis.
+
+Examples:
+  - 'NullPointerException in EntitledCustomerService'
+  - 'Investigate CID 12345, paymentId abc-def'
+  - 'Errors in payment-service since yesterday'
+
+Type 'exit' to quit.
+======================================================================
+
+Describe the issue:
+```
+
+### Session Output
+
+Each investigation creates a session directory in `logs/`:
+
+```
+logs/session_20260213_100000/
+├── transcript.txt           # Human-readable conversation
+├── tool_calls.jsonl         # Tool invocation logs
+├── investigation_report.md  # Final report
+└── files/
+    ├── datadog_findings/    # Log analysis results
+    ├── deployment_findings/ # Deployment correlations
+    └── code_findings/       # Code review results
+```
+
+## Subagents
+
+| Agent | Role | Model | Tools |
+|-------|------|-------|-------|
+| `datadog-investigator` | Log search and pattern analysis | haiku | search_logs, get_logs_by_efilogid, parse_stack_trace |
+| `deployment-analyzer` | Deployment correlation | haiku | search_commits, get_file_content, get_pr_files |
+| `code-reviewer` | Code change analysis | sonnet | get_file_content, compare_commits |
+
+## Development
+
+```bash
+# Run tests
+uv run python -m pytest tests/ -v
+
+# Run with coverage
+uv run python -m pytest tests/ --cov=utils --cov=agents --cov-report=term-missing
+
+# Run with debug logging
+LOG_LEVEL=DEBUG uv run main.py
+```
 
 ## Dependencies
 
-All dependencies are specified with minimum versions for compatibility:
-
-- `anthropic>=0.40.0` - Anthropic Python client (dependency of SDK)
-- `claude-agent-sdk>=0.1.35` - Claude Agent SDK for building autonomous agents
+Core dependencies:
+- `anthropic>=0.40.0` - Anthropic Python client
+- `claude-agent-sdk>=0.1.35` - Claude Agent SDK for AI orchestration
 - `python-dotenv>=1.0.0` - Environment variable management
 - `requests>=2.31.0` - HTTP API calls
 - `PyGithub>=2.1.1` - GitHub API client
 - `python-dateutil>=2.8.2` - Flexible datetime parsing
 - `pytz>=2023.3` - Timezone handling
+
+## Documentation
+
+- [CLAUDE.md](CLAUDE.md) - Detailed architecture and development guide
+- [docs/REWRITE_PLAN.md](docs/REWRITE_PLAN.md) - SDK migration plan
+- [AGENT_SDK_GUIDE.md](AGENT_SDK_GUIDE.md) - Claude Agent SDK usage guide
+- [QUICK_START.md](QUICK_START.md) - Fast getting-started guide
 
 ## License
 

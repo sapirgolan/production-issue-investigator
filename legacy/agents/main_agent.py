@@ -20,23 +20,23 @@ from utils.time_utils import parse_time, tel_aviv_to_utc, UTC_TZ
 from utils.report_generator import ReportGenerator
 from utils.stack_trace_parser import extract_file_paths, StackTraceParser, ParsedStackTrace
 
-from agents.datadog_retriever import (
+from legacy.agents.datadog_retriever import (
     DataDogRetriever,
     DataDogSearchResult,
     SearchMode,
 )
-from agents.deployment_checker import (
+from legacy.agents.deployment_checker import (
     DeploymentChecker,
     DeploymentCheckResult,
     DeploymentInfo,
 )
-from agents.code_checker import (
+from legacy.agents.code_checker import (
     CodeChecker,
     CodeAnalysisResult,
     FileAnalysis,
     PotentialIssue,
 )
-from agents.exception_analyzer import (
+from legacy.agents.exception_analyzer import (
     ExceptionAnalyzer,
     ExceptionAnalysis,
 )

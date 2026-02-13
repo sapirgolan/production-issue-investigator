@@ -4,13 +4,132 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Claude Agent SDK-based application for investigating production issues by:
+This is a **Claude Agent SDK-based application** for investigating production issues. The system uses true AI-powered orchestration with the `query()` function and `ClaudeAgentOptions` to coordinate specialized subagents.
+
+**Core capabilities:**
 - Searching DataDog logs for errors and patterns
 - Correlating issues with recent deployments from the `sunbit-dev/kubernetes` repository
 - Analyzing code changes between versions in application repositories (`sunbit-dev/{service-name}`)
 - Generating structured investigation reports with root cause analysis
 
-The project uses a **main orchestrator agent** that coordinates three specialized **sub-agents** (DataDog retriever, deployment checker, code checker) to conduct comprehensive investigations.
+## Architecture
+
+### SDK-Based Design
+
+The project uses the **Claude Agent SDK** for AI-powered orchestration:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      User Input                                  │
+│              (log message or identifiers)                        │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Lead Agent                                     │
+│  - Uses query() from Claude Agent SDK                            │
+│  - AI reasoning to determine investigation strategy              │
+│  - Coordinates subagents via Task tool                           │
+│  - Synthesizes findings into report                              │
+│  - Tools: Task (for subagents)                                   │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+           ┌───────────┴───────────┬────────────────┐
+           │                       │                 │
+           ▼                       ▼                 ▼
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│ datadog-         │  │ deployment-      │  │ code-            │
+│ investigator     │  │ analyzer         │  │ reviewer         │
+│                  │  │                  │  │                  │
+│ - AI agent       │  │ - AI agent       │  │ - AI agent       │
+│ - Searches logs  │  │ - Finds deploys  │  │ - Analyzes diffs │
+│ - Analyzes       │  │ - Correlates     │  │ - Identifies     │
+│   patterns       │  │   versions       │  │   issues         │
+│ - Model: haiku   │  │ - Model: haiku   │  │ - Model: sonnet  │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+           │                       │                 │
+           └───────────┬───────────┴─────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Custom MCP Tools (In-Process)                       │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ DataDog MCP Server (mcp_servers/datadog_server.py)       │  │
+│  │  - search_logs                                           │  │
+│  │  - get_logs_by_efilogid                                  │  │
+│  │  - parse_stack_trace                                     │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ GitHub MCP Server (mcp_servers/github_server.py)         │  │
+│  │  - search_commits                                        │  │
+│  │  - get_file_content                                      │  │
+│  │  - get_pr_files                                          │  │
+│  │  - compare_commits                                       │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key SDK Components
+
+**Lead Agent** (`agents/lead_agent.py`)
+- Uses `query()` with `ClaudeAgentOptions` for AI-powered orchestration
+- Spawns subagents via the `Task` tool based on investigation needs
+- Model: `opus` (requires strong reasoning for orchestration)
+
+**Subagent Definitions** (`agents/subagent_definitions.py`)
+- `DATADOG_INVESTIGATOR` - Log search and pattern analysis (haiku)
+- `DEPLOYMENT_ANALYZER` - Deployment correlation (haiku)
+- `CODE_REVIEWER` - Code change analysis (sonnet)
+
+Each subagent is defined using `AgentDefinition` with:
+- `description` - When to use this agent
+- `prompt` - Detailed instructions
+- `tools` - Available MCP and file tools
+- `model` - Optimized model selection
+
+### File Structure
+
+```
+production-issue-investigator/
+├── main.py                              # Entry point (SDK version)
+├── main_legacy.py                       # Legacy entry point (deprecated)
+├── agents/
+│   ├── lead_agent.py                    # SDK orchestrator with query()
+│   ├── subagent_definitions.py          # AgentDefinition instances
+│   ├── datadog_investigator_prompt.py   # DataDog subagent prompt
+│   ├── deployment_analyzer_prompt.py    # Deployment subagent prompt
+│   ├── code_reviewer_prompt.py          # Code reviewer subagent prompt
+│   ├── main_agent.py                    # Legacy orchestrator (deprecated)
+│   ├── datadog_retriever.py             # Legacy utility class
+│   ├── deployment_checker.py            # Legacy utility class
+│   ├── code_checker.py                  # Legacy utility class
+│   └── exception_analyzer.py            # Exception analysis utilities
+├── mcp_servers/
+│   ├── datadog_server.py                # DataDog MCP tool definitions
+│   └── github_server.py                 # GitHub MCP tool definitions
+├── utils/
+│   ├── session_manager.py               # Session directory management
+│   ├── hooks.py                         # PreToolUse/PostToolUse hooks
+│   ├── datadog_api.py                   # DataDog API wrapper
+│   ├── github_helper.py                 # GitHub API wrapper
+│   ├── config.py                        # Configuration with model settings
+│   ├── logger.py                        # Logging setup
+│   ├── time_utils.py                    # Timezone utilities
+│   ├── stack_trace_parser.py            # Stack trace parsing
+│   └── report_generator.py              # Report generation utilities
+├── logs/
+│   └── session_YYYYMMDD_HHMMSS/         # Session directories
+│       ├── transcript.txt               # Human-readable conversation
+│       ├── tool_calls.jsonl             # Machine-readable tool logs
+│       ├── investigation_report.md      # Final report
+│       └── files/
+│           ├── datadog_findings/        # DataDog subagent output
+│           ├── deployment_findings/     # Deployment subagent output
+│           └── code_findings/           # Code reviewer output
+└── tests/                               # Test suite
+```
 
 ## Running the Application
 
@@ -18,8 +137,8 @@ The project uses a **main orchestrator agent** that coordinates three specialize
 # Run with UV (recommended - handles venv and dependencies automatically)
 uv run main.py
 
-# Or run the SRE agent example
-uv run sre_agent_example.py
+# Or run the legacy version (deprecated)
+uv run main_legacy.py
 
 # Verify setup
 uv run verify_setup.py
@@ -47,17 +166,11 @@ uv run python -m pytest tests/ -v
 # Run specific test file
 uv run python -m pytest tests/test_datadog_api_coverage.py -v
 
-# Run specific test class
-uv run python -m pytest tests/test_http_logging.py::TestDataDogAPIHTTPLogging -v
-
-# Run specific test method
-uv run python -m pytest tests/test_http_logging.py::TestDataDogAPIHTTPLogging::test_http_request_logged_at_debug -v
-
 # Run with coverage
 uv run python -m pytest tests/ --cov=utils --cov=agents --cov-report=term-missing
 
-# Run with specific coverage threshold
-uv run python -m pytest tests/ --cov=utils/datadog_api --cov-report=term-missing
+# Run critical path coverage (must be 95%+)
+uv run pytest --cov=mcp_servers --cov=utils/session_manager --cov=utils/hooks --cov-fail-under=95
 ```
 
 ### Logging
@@ -68,11 +181,11 @@ LOG_LEVEL=DEBUG uv run main.py
 # Run with INFO logs (default - shows summaries only)
 LOG_LEVEL=INFO uv run main.py
 
-# View logs in real-time
-tail -f logs/agent.log
+# View session transcript
+cat logs/session_*/transcript.txt
 
-# Filter logs by type
-grep -E '\[HTTP_REQ\]|\[HTTP_RESP\]|\[GH_CLI' logs/agent.log
+# Analyze tool calls
+cat logs/session_*/tool_calls.jsonl | jq .
 ```
 
 ### Python Requirements
@@ -80,130 +193,82 @@ grep -E '\[HTTP_REQ\]|\[HTTP_RESP\]|\[GH_CLI' logs/agent.log
 - **Current**: Python 3.14.2 (tested and working)
 - **Recommended for production**: Python 3.10-3.12
 
-## Architecture
+## Subagent Details
 
-### Main Components
+### datadog-investigator
 
-**Main Agent** (`agents/main_agent.py`)
-- Orchestrates the investigation flow
-- Determines input mode (log message vs identifiers)
-- Coordinates sub-agents in parallel (one per service)
-- Aggregates findings and generates final report
-- Can apply investigation methodologies when initial results are unclear
+**Role:** Log search and pattern analysis
 
-**Sub-Agents**
-1. **DataDog Information Retriever** (`agents/datadog_retriever.py`)
-   - Searches production logs using DataDog API
-   - Extracts services, sessions (efilogid), and version info (dd.version)
-   - Time window: defaults to 4h, expands on retry (up to 7 days)
+**Tools:**
+- `mcp__datadog__search_logs` - Search DataDog logs with query filters
+- `mcp__datadog__get_logs_by_efilogid` - Retrieve session logs
+- `mcp__datadog__parse_stack_trace` - Extract file paths from exceptions
+- `Write`, `Read`, `Glob` - File operations
 
-2. **Deployment Checker** (`agents/deployment_checker.py`)
-   - Searches `sunbit-dev/kubernetes` for recent deployments (72h window)
-   - Correlates kubernetes commits with application versions
-   - Retrieves PR file changes
+**Output:** Writes to `files/datadog_findings/summary.json`
 
-3. **Code Checker** (`agents/code_checker.py`)
-   - Maps service names to GitHub repositories (`sunbit-dev/{service-name}`)
-   - Compares deployed version (from dd.version) with parent commit
-   - Generates diffs and analyzes potential issues
-   - **Fallback**: If `{service-name}-jobs` repo not found, tries `{service-name}`
+**Model:** haiku (cost-effective for search operations)
 
-### Execution Flow
+### deployment-analyzer
+
+**Role:** Find and correlate deployments with errors
+
+**Tools:**
+- `mcp__github__search_commits` - Search kubernetes repo commits
+- `mcp__github__get_file_content` - Get file at commit
+- `mcp__github__get_pr_files` - Get PR changed files
+- `Write`, `Read`, `Bash` - File and shell operations
+
+**Output:** Writes to `files/deployment_findings/{service}_deployments.json`
+
+**Model:** haiku (cost-effective for search)
+
+### code-reviewer
+
+**Role:** Analyze code changes for potential issues
+
+**Tools:**
+- `mcp__github__get_file_content` - Get file at specific commit
+- `mcp__github__compare_commits` - Get diff between commits
+- `Write`, `Read` - File operations
+
+**Output:** Writes to `files/code_findings/{service}_analysis.json`
+
+**Model:** sonnet (needs good code analysis capabilities)
+
+## Session Management
+
+Each investigation creates a session directory with:
 
 ```
-User Input (Mode 1: Log Message OR Mode 2: Identifiers)
-  ↓
-DataDog Search (Step 1: initial search, Step 2: all unique efilogids)
-  ↓
-Extract unique services
-  ↓
-For each service IN PARALLEL:
-  ├─ Deployment Checker (find kubernetes commits)
-  └─ Code Checker (uses deployment info, runs sequentially after)
-  ↓
-Aggregate results → Generate investigation report
+logs/session_YYYYMMDD_HHMMSS/
+├── transcript.txt           # Human-readable conversation log
+├── tool_calls.jsonl         # Machine-readable tool invocations
+├── investigation_report.md  # Final Markdown report
+└── files/
+    ├── datadog_findings/    # DataDog subagent outputs
+    │   └── summary.json
+    ├── deployment_findings/ # Deployment subagent outputs
+    │   └── {service}_deployments.json
+    └── code_findings/       # Code reviewer outputs
+        └── {service}_analysis.json
 ```
 
-**Key parallelization**: Multiple services are checked in parallel, but for each service, Code Checker runs sequentially after Deployment Checker (needs deployment commit hash).
-
-## Key Technical Details
-
-### Logging Infrastructure
-
-**Output Locations:**
-- **File**: `logs/agent.log` (rotating, 10MB max, 5 backups)
-- **Console**: Stdout/stderr (same format)
-
-**Log Levels:**
-- **DEBUG**: Full details with complete HTTP bodies, CLI stdout/stderr, all headers (redacted)
-- **INFO**: Summaries with timing, sizes, status codes
-
-**Log Format:**
+**transcript.txt** - Human-readable log of the conversation:
 ```
-[2026-02-12 09:37:05,485] [utils.datadog_api] [INFO] [HTTP_REQ] POST https://... body_size=109B
-[2026-02-12 09:37:05,993] [utils.github_helper] [INFO] [GH_CLI_RESP] status=0 timing=507ms stdout_size=5598B
+User: NullPointerException in EntitledCustomerService
+
+Agent: [LEAD] Starting Task
+[datadog-investigator] Starting mcp__datadog__search_logs
+[datadog-investigator] mcp__datadog__search_logs completed (1234ms)
+...
 ```
 
-**Structured Tags:**
-- `[HTTP_REQ]` - DataDog API HTTP request
-- `[HTTP_RESP]` - DataDog API HTTP response
-- `[GH_CLI_REQ]` - GitHub CLI command
-- `[GH_CLI_RESP]` - GitHub CLI result
-
-**Sensitive Data Redaction:**
-All API keys, tokens, and Authorization headers are automatically redacted with `***REDACTED***`.
-
-### Timezone Handling
-- **Default user timezone**: Tel Aviv (Asia/Jerusalem)
-- **DataDog API**: Always use UTC timestamps
-- **Utilities**: `utils/time_utils.py` handles conversion
-
-### Version Correlation
-- **DataDog logs** contain `attributes.dd.version`: `{commit_hash}___{build_number}`
-- **Kubernetes commits** have title pattern: `{service-name}-{commit_hash}___{build_number}`
-- **Code comparison**: Compare deployed version (from dd.version) vs its parent commit
-
-### Service to Repository Mapping
-```python
-# Primary pattern
-service_name → sunbit-dev/{service-name}
-
-# Fallback for "-jobs" services
-card-jobs-service → sunbit-dev/card-jobs-service (404)
-                  → sunbit-dev/card-service (retry)
+**tool_calls.jsonl** - Machine-readable tool call logs:
+```json
+{"event":"tool_call_start","timestamp":"2026-02-13T10:00:00.123Z","tool_use_id":"abc123","agent_id":"LEAD","tool_name":"Task","parent_tool_use_id":null}
+{"event":"tool_call_complete","timestamp":"2026-02-13T10:00:05.456Z","tool_use_id":"abc123","agent_id":"LEAD","tool_name":"Task","success":true,"duration_ms":5333}
 ```
-
-### Logger Name to File Path
-```python
-# Logger name from DataDog
-"com.sunbit.card.invitation.lead.application.EntitledCustomerService"
-
-# Maps to file path
-"src/main/kotlin/com/sunbit/card/invitation/lead/application/EntitledCustomerService.kt"
-# Fallback: Try .java if .kt not found
-```
-
-### Rate Limit Handling (DataDog)
-When 429 received:
-1. Parse `X-RateLimit-Reset` header (Unix timestamp)
-2. Calculate wait time: `reset_time - current_time`
-3. Wait until reset
-4. Retry request once
-
-### DataDog Query Escaping
-**Important**: When querying by efilogid, the value must be wrapped in quotes:
-```python
-# Correct format (Python string with quotes)
-query = '@efilogid:"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl"'
-
-# When JSON serialized by requests library, becomes:
-# @efilogid:\"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl\"
-
-# Wrong format (no quotes - will not match)
-query = '@efilogid:-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl'
-```
-
-**Note**: Do NOT manually escape quotes in the Python string (e.g., `\\"value\\"`). The `requests` library's `json` parameter automatically handles proper JSON escaping when serializing the request body.
 
 ## Environment Configuration
 
@@ -223,40 +288,74 @@ GITHUB_TOKEN=ghp_...
 # Application
 LOG_LEVEL=INFO  # Use DEBUG for full HTTP/CLI logs
 TIMEZONE=Asia/Tel_Aviv
+
+# Model Configuration (optional - defaults shown)
+LEAD_AGENT_MODEL=opus
+DATADOG_INVESTIGATOR_MODEL=haiku
+DEPLOYMENT_ANALYZER_MODEL=haiku
+CODE_REVIEWER_MODEL=sonnet
+
+# Permission Mode (optional)
+BYPASS_PERMISSIONS=bypassPermissions  # Use "acceptEdits" in production
 ```
 
-## Important Design Patterns
+## Key Technical Details
 
-### Sub-Agent Retry Logic
+### Hook System
+
+The hook system (`utils/hooks.py`) provides observability:
+
+**PreToolUse Hooks:**
+- Log tool invocations with timestamp
+- Track parent-child relationships (lead vs subagent)
+- Record start time for duration calculation
+
+**PostToolUse Hooks:**
+- Log success/failure status
+- Calculate and record duration
+- Write to both JSONL and transcript
+
+### MCP Tool Design
+
+Tools in `mcp_servers/` follow this pattern:
 ```python
-try:
-    result = sub_agent.execute()
-except Exception as e:
-    log_error(e)
-    result = sub_agent.execute()  # Retry once with same parameters
-    if failed_again:
-        return partial_results  # Continue with what we have
-```
-
-### Investigation Methodologies
-When Mode 2 (identifiers) doesn't yield clear results:
-- Main agent can apply `systematic-debugging` or `investigate` methodologies
-- These are **guidance processes** (not executable skills)
-- Applied to GitHub-fetched files to find root cause
-- Only documented in report if methodology was critical to breakthrough
-
-### Parallel vs Sequential Execution
-```python
-# Multiple services: PARALLEL
-asyncio.gather(
-    investigate_service("card-invitation-service"),
-    investigate_service("payment-service"),
-    investigate_service("card-account-service")
+@tool(
+    "tool_name",
+    "Description for Claude to understand when to use this",
+    {"param1": str, "param2": int}
 )
+async def tool_name_impl(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        # Call existing utility via asyncio.to_thread()
+        result = await asyncio.to_thread(utility.method, args["param1"])
+        return {
+            "content": [{"type": "text", "text": json.dumps(result)}]
+        }
+    except Exception as e:
+        return {
+            "content": [{"type": "text", "text": f"Error: {e}"}],
+            "is_error": True
+        }
+```
 
-# Per service: SEQUENTIAL (Code Checker needs deployment info)
-deployment_info = await deployment_checker.check(service)
-code_analysis = await code_checker.analyze(service, deployment_info)
+### Timezone Handling
+- **Default user timezone**: Tel Aviv (Asia/Jerusalem)
+- **DataDog API**: Always use UTC timestamps
+- **Utilities**: `utils/time_utils.py` handles conversion
+
+### Version Correlation
+- **DataDog logs** contain `attributes.dd.version`: `{commit_hash}___{build_number}`
+- **Kubernetes commits** have title pattern: `{service-name}-{commit_hash}___{build_number}`
+- **Code comparison**: Compare deployed version (from dd.version) vs its parent commit
+
+### DataDog Query Escaping
+**Important**: When querying by efilogid, the value must be wrapped in quotes:
+```python
+# Correct format (Python string with quotes)
+query = '@efilogid:"-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl"'
+
+# Wrong format (no quotes - will not match)
+query = '@efilogid:-1-NGFmMmVkMTgtYmU2YS00MmFiLTg0Y2UtNjBmNTU0N2UwYjFl'
 ```
 
 ## Investigation Report Structure
@@ -264,59 +363,20 @@ code_analysis = await code_checker.analyze(service, deployment_info)
 The agent generates Markdown reports with:
 - **Executive Summary**: 2-3 sentence overview
 - **Timeline**: Chronological events (deployments, errors)
-- **Services Involved**: List with log counts, deployments, versions
+- **Services Impacted**: List with log counts, deployments, versions
 - **Root Cause Analysis**: Primary cause + contributing factors with confidence level
-- **Evidence**: DataDog logs, code diffs, deployment info
+- **Code Issues Found**: Specific files, issues, and recommended fixes
 - **Proposed Fix**: Options with risk assessment and code examples
 - **Testing Required**: Manual and automated test cases
 - **Next Steps**: Developer checklist
 
-**Note**: "Investigation Methodologies Applied" section only included when methodologies led to breakthrough (not for standard investigations).
-
-## Testing Strategy
-
-### Test Structure
-Tests are organized by module:
-- `tests/test_datadog_api_coverage.py` - DataDog API wrapper tests
-- `tests/test_http_logging.py` - HTTP and CLI logging tests (26 tests)
-- `tests/test_phase1.py` - Phase 1 foundation tests
-- `tests/test_stack_trace.py` - Stack trace parsing and analysis tests
-- `tests/test_exception_analyzer.py` - Exception analysis tests
-- `tests/test_report_generator_coverage.py` - Report generation tests
-
-### Coverage Requirements
-- **Utils modules**: Aim for 100% coverage (critical infrastructure)
-- **Agent modules**: Aim for 80%+ coverage
-- **Integration points**: All external API calls must be tested with mocks
-
-### Phase-Based Development
-The design document (see `docs/designs/production-issue-investigator-design.md`) outlines 5 implementation phases:
-
-1. **Phase 1: Foundation** - DataDog API connectivity, time utils, logging
-2. **Phase 2: DataDog Sub-Agent** - Log retrieval and basic orchestration
-3. **Phase 3: Deployment Checker** - Kubernetes commit correlation
-4. **Phase 4: Code Checker** - Code diff and analysis
-5. **Phase 5: Reporting** - Full integration and comprehensive reports
-
-Each phase has specific deliverables and test scenarios.
-
-### Manual Testing Scenarios
-- Known production issues with clear root causes
-- Issues requiring investigation methodologies
-- Time window edge cases (no datetime, future datetime, very old datetime)
-- Multiple services with different error patterns
-- Repository mapping edge cases (jobs services, missing repos)
-- API failures and rate limits
-
 ## Common Pitfalls to Avoid
 
-1. **Don't assume timezones**: Always convert user input (Tel Aviv) → UTC for DataDog
-2. **Don't skip efilogid session retrieval**: After initial search, fetch logs for ALL unique efilogids (not just first one)
+1. **Don't assume timezones**: Always convert user input (Tel Aviv) to UTC for DataDog
+2. **Don't skip efilogid session retrieval**: After initial search, fetch logs for ALL unique efilogids
 3. **Don't use branch names for version comparison**: Always use exact commit hashes from dd.version
-4. **Don't parallelize deployment→code checks per service**: Code Checker needs deployment info first
-5. **Don't retry infinitely on rate limits**: Wait for X-RateLimit-Reset, retry once, then fail gracefully
-6. **Don't expand time window into the future**: When user provides datetime, never search beyond current time
-7. **Don't forget query escaping**: efilogid queries must have escaped quotes around the value
+4. **Don't forget query escaping**: efilogid queries must have escaped quotes around the value
+5. **Don't ignore session files**: Subagents communicate via files in the session directory
 
 ## Project-Specific Constraints
 
@@ -339,21 +399,10 @@ Always include in queries:
 - Application repos: `sunbit-dev/{service-name}`
 - All repos are private (requires GITHUB_TOKEN)
 
-## Babysitter Workflows
-
-The project uses babysitter orchestration for complex TDD workflows (`.a5c/processes/`):
-- `add-http-logging.js` - TDD workflow for adding HTTP/CLI logging
-- `efilogid-escape-fix.js` - TDD workflow for query escaping fixes
-
-These processes demonstrate quality-gated iterative development with:
-- Test-first development
-- Quality convergence loops (target: 85-90%)
-- Integration testing
-- User approval breakpoints
-
 ## Additional Documentation
 
-- **Design Document**: `docs/designs/production-issue-investigator-design.md` - Comprehensive 1150-line design with API examples
+- **Rewrite Plan**: `docs/REWRITE_PLAN.md` - Comprehensive SDK migration plan
+- **Design Document**: `docs/designs/production-issue-investigator-design.md` - Original design
 - **Agent SDK Guide**: `AGENT_SDK_GUIDE.md` - Complete Claude Agent SDK usage guide
 - **README**: `README.md` - Installation and basic usage
 - **Quick Start**: `QUICK_START.md` - Fast getting-started guide

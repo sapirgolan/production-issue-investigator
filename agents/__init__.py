@@ -1,57 +1,37 @@
 """
 Agent modules for the Production Issue Investigator.
 
-This package contains:
-- MainAgent: The main orchestrator agent that coordinates investigation
-- DataDogRetriever: Sub-agent for searching and retrieving DataDog logs
-- DeploymentChecker: Sub-agent for checking recent deployments (Phase 3)
-- CodeChecker: Sub-agent for analyzing code changes (Phase 4)
+This package contains the Claude Agent SDK-based implementation:
+- LeadAgent: The main orchestrator agent using SDK query()
+- Subagent Definitions: AI agents for DataDog, Deployment, and Code analysis
+- Prompts: Specialized prompts for each subagent
+
+Legacy agents have been moved to legacy/agents/ directory.
 """
 
-from agents.main_agent import (
-    MainAgent,
-    InputMode,
-    UserInput,
-    ServiceInvestigationResult,
+from agents.lead_agent import LeadAgent, run_interactive, LEAD_AGENT_PROMPT
+from agents.subagent_definitions import (
+    SUBAGENT_DEFINITIONS,
+    DATADOG_INVESTIGATOR,
+    DEPLOYMENT_ANALYZER,
+    CODE_REVIEWER,
 )
-from agents.datadog_retriever import (
-    DataDogRetriever,
-    DataDogSearchInput,
-    DataDogSearchResult,
-    SearchMode,
-    SearchAttempt,
-)
-from agents.deployment_checker import (
-    DeploymentChecker,
-    DeploymentInfo,
-    DeploymentCheckResult,
-)
-from agents.code_checker import (
-    CodeChecker,
-    CodeAnalysisResult,
-    FileAnalysis,
-    PotentialIssue,
-)
+from agents.datadog_investigator_prompt import DATADOG_INVESTIGATOR_PROMPT
+from agents.deployment_analyzer_prompt import DEPLOYMENT_ANALYZER_PROMPT
+from agents.code_reviewer_prompt import CODE_REVIEWER_PROMPT
 
 __all__ = [
-    # Main Agent
-    "MainAgent",
-    "InputMode",
-    "UserInput",
-    "ServiceInvestigationResult",
-    # DataDog Retriever
-    "DataDogRetriever",
-    "DataDogSearchInput",
-    "DataDogSearchResult",
-    "SearchMode",
-    "SearchAttempt",
-    # Deployment Checker
-    "DeploymentChecker",
-    "DeploymentInfo",
-    "DeploymentCheckResult",
-    # Code Checker
-    "CodeChecker",
-    "CodeAnalysisResult",
-    "FileAnalysis",
-    "PotentialIssue",
+    # Lead Agent
+    "LeadAgent",
+    "run_interactive",
+    "LEAD_AGENT_PROMPT",
+    # Subagent Definitions
+    "SUBAGENT_DEFINITIONS",
+    "DATADOG_INVESTIGATOR",
+    "DEPLOYMENT_ANALYZER",
+    "CODE_REVIEWER",
+    # Prompts
+    "DATADOG_INVESTIGATOR_PROMPT",
+    "DEPLOYMENT_ANALYZER_PROMPT",
+    "CODE_REVIEWER_PROMPT",
 ]

@@ -381,7 +381,7 @@ class TestMainAgentStackTrace(unittest.TestCase):
 
     def test_service_investigation_result_has_stack_trace_files(self):
         """Test ServiceInvestigationResult has stack_trace_files field."""
-        from agents.main_agent import ServiceInvestigationResult
+        from legacy.agents.main_agent import ServiceInvestigationResult
 
         result = ServiceInvestigationResult(
             service_name="test-service",
@@ -393,7 +393,7 @@ class TestMainAgentStackTrace(unittest.TestCase):
 
     def test_service_investigation_result_stack_trace_files_defaults_none(self):
         """Test stack_trace_files defaults to None."""
-        from agents.main_agent import ServiceInvestigationResult
+        from legacy.agents.main_agent import ServiceInvestigationResult
 
         result = ServiceInvestigationResult(service_name="test-service")
 
@@ -401,13 +401,13 @@ class TestMainAgentStackTrace(unittest.TestCase):
 
     def test_extract_stack_trace_files_per_service(self):
         """Test _extract_stack_trace_files_per_service method."""
-        from agents.main_agent import MainAgent
-        from agents.datadog_retriever import DataDogSearchResult
+        from legacy.agents.main_agent import MainAgent
+        from legacy.agents.datadog_retriever import DataDogSearchResult
         from utils.datadog_api import LogEntry
         from unittest.mock import MagicMock
 
         # Create mock config
-        with patch('agents.main_agent.get_config') as mock_get_config:
+        with patch('legacy.agents.main_agent.get_config') as mock_get_config:
             mock_config = MagicMock()
             mock_config.log_level = "INFO"
             mock_get_config.return_value = mock_config
@@ -461,12 +461,12 @@ class TestMainAgentStackTrace(unittest.TestCase):
 
     def test_extract_stack_trace_files_skips_non_error_logs(self):
         """Test that info logs are not processed for stack traces."""
-        from agents.main_agent import MainAgent
-        from agents.datadog_retriever import DataDogSearchResult
+        from legacy.agents.main_agent import MainAgent
+        from legacy.agents.datadog_retriever import DataDogSearchResult
         from utils.datadog_api import LogEntry
         from unittest.mock import MagicMock
 
-        with patch('agents.main_agent.get_config') as mock_get_config:
+        with patch('legacy.agents.main_agent.get_config') as mock_get_config:
             mock_config = MagicMock()
             mock_config.log_level = "INFO"
             mock_get_config.return_value = mock_config
@@ -501,12 +501,12 @@ class TestMainAgentStackTrace(unittest.TestCase):
 
     def test_extract_stack_trace_files_also_checks_message(self):
         """Test that message field is also checked for embedded stack traces."""
-        from agents.main_agent import MainAgent
-        from agents.datadog_retriever import DataDogSearchResult
+        from legacy.agents.main_agent import MainAgent
+        from legacy.agents.datadog_retriever import DataDogSearchResult
         from utils.datadog_api import LogEntry
         from unittest.mock import MagicMock
 
-        with patch('agents.main_agent.get_config') as mock_get_config:
+        with patch('legacy.agents.main_agent.get_config') as mock_get_config:
             mock_config = MagicMock()
             mock_config.log_level = "INFO"
             mock_get_config.return_value = mock_config
@@ -556,7 +556,7 @@ class TestCodeCheckerLineCorrelation(unittest.TestCase):
 
     def test_get_changed_line_numbers(self):
         """Test extracting changed line numbers from diff."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
 
         checker = CodeChecker(github_token="test-token")
         changed = checker.get_changed_line_numbers(self.SAMPLE_DIFF)
@@ -569,7 +569,7 @@ class TestCodeCheckerLineCorrelation(unittest.TestCase):
 
     def test_check_line_in_changes_direct(self):
         """Test checking if a line is directly in changed lines."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
 
         checker = CodeChecker(github_token="test-token")
         result = checker.check_line_in_changes(
@@ -582,7 +582,7 @@ class TestCodeCheckerLineCorrelation(unittest.TestCase):
 
     def test_check_line_in_changes_nearby(self):
         """Test checking if a line is near changed lines."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
 
         checker = CodeChecker(github_token="test-token")
         result = checker.check_line_in_changes(
@@ -597,7 +597,7 @@ class TestCodeCheckerLineCorrelation(unittest.TestCase):
 
     def test_check_line_not_in_changes(self):
         """Test checking a line far from changes."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
 
         checker = CodeChecker(github_token="test-token")
         result = checker.check_line_in_changes(
@@ -611,7 +611,7 @@ class TestCodeCheckerLineCorrelation(unittest.TestCase):
 
     def test_check_exception_specific_issues_null_check_removed(self):
         """Test detecting null check removal for NullPointerException."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
 
         # Diff that removes null check
         diff_with_removed_null_check = """--- a/Test.kt
@@ -640,7 +640,7 @@ class TestCodeCheckerKotlinJavaFallback(unittest.TestCase):
 
     def test_analyze_files_directly_tries_kt_fallback_for_java(self):
         """Test that when .java file not found, .kt is tried."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
         from utils.github_helper import GitHubNotFoundError
         from unittest.mock import MagicMock
 
@@ -680,7 +680,7 @@ class TestCodeCheckerKotlinJavaFallback(unittest.TestCase):
 
     def test_analyze_files_directly_tries_java_fallback_for_kt(self):
         """Test that when .kt file not found, .java is tried."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
         from utils.github_helper import GitHubNotFoundError
         from unittest.mock import MagicMock
 
@@ -714,7 +714,7 @@ class TestCodeCheckerKotlinJavaFallback(unittest.TestCase):
 
     def test_analyze_files_directly_error_if_both_fail(self):
         """Test that error is set if both .kt and .java fail."""
-        from agents.code_checker import CodeChecker
+        from legacy.agents.code_checker import CodeChecker
         from utils.github_helper import GitHubNotFoundError
         from unittest.mock import MagicMock
 
@@ -742,7 +742,7 @@ class TestReportGeneratorCallFlow(unittest.TestCase):
     def test_call_flow_section_formatting(self):
         """Test that call flow section is properly formatted."""
         from utils.report_generator import ReportGenerator
-        from agents.exception_analyzer import ExceptionAnalysis, CallFlowStep, LineCorrelation
+        from legacy.agents.exception_analyzer import ExceptionAnalysis, CallFlowStep, LineCorrelation
 
         generator = ReportGenerator()
 
@@ -1007,7 +1007,7 @@ class TestMainAgentExceptionAnalysis(unittest.TestCase):
 
     def test_service_investigation_result_has_parsed_traces_field(self):
         """Test ServiceInvestigationResult has parsed_stack_traces field."""
-        from agents.main_agent import ServiceInvestigationResult
+        from legacy.agents.main_agent import ServiceInvestigationResult
         from utils.stack_trace_parser import ParsedStackTrace
 
         parsed = ParsedStackTrace(
@@ -1025,8 +1025,8 @@ class TestMainAgentExceptionAnalysis(unittest.TestCase):
 
     def test_service_investigation_result_has_exception_analysis_field(self):
         """Test ServiceInvestigationResult has exception_analysis field."""
-        from agents.main_agent import ServiceInvestigationResult
-        from agents.exception_analyzer import ExceptionAnalysis
+        from legacy.agents.main_agent import ServiceInvestigationResult
+        from legacy.agents.exception_analyzer import ExceptionAnalysis
 
         analysis = ExceptionAnalysis(
             exception_type="NullPointerException",
@@ -1043,7 +1043,7 @@ class TestMainAgentExceptionAnalysis(unittest.TestCase):
 
     def test_service_investigation_result_new_fields_default_none(self):
         """Test new fields default to None for backwards compatibility."""
-        from agents.main_agent import ServiceInvestigationResult
+        from legacy.agents.main_agent import ServiceInvestigationResult
 
         result = ServiceInvestigationResult(service_name="test-service")
 
@@ -1052,12 +1052,12 @@ class TestMainAgentExceptionAnalysis(unittest.TestCase):
 
     def test_extract_stack_trace_data_returns_file_paths_and_traces(self):
         """Test _extract_stack_trace_data_per_service returns both file_paths and parsed_traces."""
-        from agents.main_agent import MainAgent
-        from agents.datadog_retriever import DataDogSearchResult
+        from legacy.agents.main_agent import MainAgent
+        from legacy.agents.datadog_retriever import DataDogSearchResult
         from utils.datadog_api import LogEntry
         from unittest.mock import MagicMock, patch
 
-        with patch('agents.main_agent.get_config') as mock_get_config:
+        with patch('legacy.agents.main_agent.get_config') as mock_get_config:
             mock_config = MagicMock()
             mock_config.log_level = "INFO"
             mock_get_config.return_value = mock_config
@@ -1097,12 +1097,12 @@ class TestMainAgentExceptionAnalysis(unittest.TestCase):
 
     def test_primary_trace_selection(self):
         """Test that primary trace is selected (first error log with trace)."""
-        from agents.main_agent import MainAgent
-        from agents.datadog_retriever import DataDogSearchResult
+        from legacy.agents.main_agent import MainAgent
+        from legacy.agents.datadog_retriever import DataDogSearchResult
         from utils.datadog_api import LogEntry
         from unittest.mock import MagicMock, patch
 
-        with patch('agents.main_agent.get_config') as mock_get_config:
+        with patch('legacy.agents.main_agent.get_config') as mock_get_config:
             mock_config = MagicMock()
             mock_config.log_level = "INFO"
             mock_get_config.return_value = mock_config

@@ -37,7 +37,7 @@ class TestCallFlowBuilding(unittest.TestCase):
 
     def test_build_call_flow_ordering(self):
         """Test that call flow is built in correct order (deepest to shallowest)."""
-        from agents.exception_analyzer import ExceptionAnalyzer, CallFlowStep
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer, CallFlowStep
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -64,7 +64,7 @@ class TestCallFlowBuilding(unittest.TestCase):
 
     def test_build_call_flow_empty_frames(self):
         """Test call flow with empty frames."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import ParsedStackTrace
 
         parsed = ParsedStackTrace()
@@ -79,7 +79,7 @@ class TestLineCorrelation(unittest.TestCase):
 
     def test_correlate_direct_line_match(self):
         """Test correlation when stack frame line directly matches changed line."""
-        from agents.exception_analyzer import ExceptionAnalyzer, LineCorrelation
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer, LineCorrelation
         from utils.stack_trace_parser import StackFrame
 
         frame = StackFrame(
@@ -101,7 +101,7 @@ class TestLineCorrelation(unittest.TestCase):
 
     def test_correlate_nearby_changes(self):
         """Test correlation when line is near but not in changed lines."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import StackFrame
 
         frame = StackFrame(
@@ -124,7 +124,7 @@ class TestLineCorrelation(unittest.TestCase):
 
     def test_correlate_no_match(self):
         """Test correlation when line has no relation to changes."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import StackFrame
 
         frame = StackFrame(
@@ -150,7 +150,7 @@ class TestRootCauseExplanation(unittest.TestCase):
 
     def test_generate_explanation_for_npe(self):
         """Test generating explanation for NullPointerException."""
-        from agents.exception_analyzer import ExceptionAnalyzer, ExceptionAnalysis
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer, ExceptionAnalysis
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -173,7 +173,7 @@ class TestRootCauseExplanation(unittest.TestCase):
 
     def test_generate_explanation_for_illegal_state(self):
         """Test generating explanation for IllegalStateException."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -199,7 +199,7 @@ class TestFixSuggestions(unittest.TestCase):
 
     def test_suggest_fixes_for_npe(self):
         """Test fix suggestions for NullPointerException."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -225,7 +225,7 @@ class TestFixSuggestions(unittest.TestCase):
 
     def test_suggest_fixes_for_illegal_argument(self):
         """Test fix suggestions for IllegalArgumentException."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -255,7 +255,7 @@ class TestFullAnalysis(unittest.TestCase):
 
     def test_analyze_returns_complete_analysis(self):
         """Test that analyze() returns a complete ExceptionAnalysis."""
-        from agents.exception_analyzer import ExceptionAnalyzer, ExceptionAnalysis
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer, ExceptionAnalysis
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -285,7 +285,7 @@ class TestFullAnalysis(unittest.TestCase):
 
     def test_analyze_with_no_diff(self):
         """Test analyze() when no diff is provided."""
-        from agents.exception_analyzer import ExceptionAnalyzer
+        from legacy.agents.exception_analyzer import ExceptionAnalyzer
         from utils.stack_trace_parser import ParsedStackTrace, StackFrame
 
         frames = [
@@ -310,7 +310,7 @@ class TestExceptionPatterns(unittest.TestCase):
 
     def test_exception_patterns_exist(self):
         """Test that EXCEPTION_PATTERNS knowledge base exists and has common exceptions."""
-        from agents.exception_analyzer import EXCEPTION_PATTERNS
+        from legacy.agents.exception_analyzer import EXCEPTION_PATTERNS
 
         expected_exceptions = [
             "NullPointerException",
@@ -323,7 +323,7 @@ class TestExceptionPatterns(unittest.TestCase):
 
     def test_exception_pattern_has_required_fields(self):
         """Test that each exception pattern has required fields."""
-        from agents.exception_analyzer import EXCEPTION_PATTERNS
+        from legacy.agents.exception_analyzer import EXCEPTION_PATTERNS
 
         required_fields = ["common_causes", "fix_patterns"]
 
