@@ -269,6 +269,11 @@ production-issue-investigator/
 
 ## Implementation Phases
 
+> **DECISION (2026-02-13)**: Explicit go/no-go gates after every phase.
+>
+> Each phase must pass its gate criteria before proceeding. If blocked, fix issues before moving forward.
+> This prevents accumulating technical debt and ensures quality at each step.
+
 ### Phase 1: Foundation Setup (Week 1)
 
 **Goal:** Establish SDK infrastructure and session management
@@ -295,8 +300,12 @@ production-issue-investigator/
    - File: `utils/config.py`
    - Add:
      - `session_log_dir` config
-     - `default_model` config
      - `bypass_permissions` flag
+     - Per-agent model configuration:
+       - `LEAD_AGENT_MODEL` (default: opus)
+       - `DATADOG_INVESTIGATOR_MODEL` (default: haiku)
+       - `DEPLOYMENT_ANALYZER_MODEL` (default: haiku)
+       - `CODE_REVIEWER_MODEL` (default: sonnet)
 
 4. **Create Directory Structure**
    ```bash
@@ -309,6 +318,16 @@ production-issue-investigator/
 - ✅ Hooks logging to JSONL
 - ✅ Directory structure created
 - ✅ Tests for session system
+
+#### Phase 1 Gate Criteria
+- [ ] `utils/session_manager.py` creates session directories correctly
+- [ ] `utils/hooks.py` logs PreToolUse/PostToolUse events to JSONL
+- [ ] Parent-child tool call tracking works (verified with mock)
+- [ ] Config loads new model and permission settings
+- [ ] **8+ tests pass** for session management and hooks
+- [ ] **95% coverage** on `utils/session_manager.py` and `utils/hooks.py`
+
+**Gate Decision:** All criteria must pass. If any fail, fix before Phase 2.
 
 ---
 
@@ -509,6 +528,19 @@ datadog_mcp_server = create_sdk_mcp_server(
 - ✅ GitHub MCP server with 4 tools
 - ✅ All tools tested with mock responses
 - ✅ Error handling in all tools
+
+#### Phase 2 Gate Criteria
+- [ ] `search_logs` tool returns valid JSON with truncated results
+- [ ] `get_logs_by_efilogid` tool handles quote escaping correctly
+- [ ] `parse_stack_trace` tool extracts file paths and exceptions
+- [ ] GitHub tools (`search_commits`, `get_file_content`, `get_pr_files`, `compare_commits`) all functional
+- [ ] All tools use `asyncio.to_thread()` for sync utility calls
+- [ ] Rate limit handling with `asyncio.sleep()` tested
+- [ ] **20+ tests pass** for MCP tools
+- [ ] **95% coverage** on `mcp_servers/datadog_server.py` and `mcp_servers/github_server.py`
+- [ ] Tools tested against real APIs (staging) with rate limit simulation
+
+**Gate Decision:** All criteria must pass. If any fail, fix before Phase 3.
 
 ---
 
@@ -811,6 +843,17 @@ Also write summary: `files/code_findings/summary.json`
 - ✅ AgentDefinition for each subagent
 - ✅ Tool access properly scoped
 - ✅ Output format standardized (JSON to files/)
+
+#### Phase 3 Gate Criteria
+- [ ] DataDog Investigator prompt produces valid `summary.json` (manual test with real logs)
+- [ ] Deployment Analyzer prompt reads DataDog findings and produces deployment correlations
+- [ ] Code Reviewer prompt analyzes diffs and identifies potential issues
+- [ ] All prompts handle edge cases: empty results, rate limits, missing data
+- [ ] Output JSON validates against dataclass schemas
+- [ ] **Manual validation**: Run each subagent independently, verify output quality
+- [ ] AgentDefinition model configuration respects environment overrides
+
+**Gate Decision:** All criteria must pass. **This is a critical gate** - subagent quality directly impacts final report quality. Consider extending Phase 3 if prompt tuning needed.
 
 ---
 
@@ -1222,6 +1265,19 @@ if __name__ == "__main__":
 - ✅ Error handling and retries
 - ✅ Interactive mode working
 
+#### Phase 4 Gate Criteria
+- [ ] Lead agent invokes all three subagents in correct order (DataDog → Deployment → Code)
+- [ ] File-based coordination works: lead agent reads subagent findings correctly
+- [ ] Session directory contains all expected files after investigation
+- [ ] `tool_calls.jsonl` shows parent-child relationships
+- [ ] `transcript.txt` is human-readable and complete
+- [ ] Retry policy applied correctly per failure type
+- [ ] **Integration test**: Full investigation with mocked subagents passes
+- [ ] **Smoke test**: Real investigation produces reasonable report (manual review)
+- [ ] **95% coverage** on `agents/lead_agent.py`
+
+**Gate Decision:** All criteria must pass. Compare output quality with legacy system on 3+ test cases.
+
 ---
 
 ### Phase 5: Testing & Refinement (Week 5)
@@ -1275,6 +1331,43 @@ if __name__ == "__main__":
 - ✅ 85%+ code coverage
 - ✅ Error scenarios tested
 - ✅ Performance benchmarks
+
+> **DECISION (2026-02-13)**: Coverage target strategy - tiered approach.
+>
+> **Overall Target:** 85% line coverage
+>
+> **Critical Paths (95% coverage required):**
+> - `mcp_servers/datadog_server.py` - All MCP tools
+> - `mcp_servers/github_server.py` - All MCP tools
+> - `utils/session_manager.py` - Session lifecycle
+> - `utils/hooks.py` - PreToolUse/PostToolUse tracking
+> - `agents/lead_agent.py` - Orchestration logic
+>
+> **Standard Coverage (85%):**
+> - `agents/*_prompt.py` - Subagent definitions
+> - `agents/subagent_definitions.py`
+> - Integration tests
+>
+> **Measurement:**
+> ```bash
+> # Overall coverage
+> uv run pytest --cov=. --cov-report=term-missing
+>
+> # Critical path coverage (must be 95%+)
+> uv run pytest --cov=mcp_servers --cov=utils/session_manager --cov=utils/hooks --cov-fail-under=95
+> ```
+
+#### Phase 5 Gate Criteria
+- [ ] **40+ new tests** added (total 227+ tests)
+- [ ] **85% overall coverage** achieved
+- [ ] **95% critical path coverage** on MCP tools, session manager, hooks, lead agent
+- [ ] All error scenarios tested: rate limits, timeouts, schema errors, partial data
+- [ ] Performance benchmarks documented: avg investigation time, token usage
+- [ ] **Comparison test**: New system produces equivalent or better reports vs legacy on 10 test cases
+- [ ] No regressions in existing 187 tests
+- [ ] CI pipeline configured and passing
+
+**Gate Decision:** All criteria must pass. This is the **final quality gate** before production.
 
 ---
 
@@ -1343,6 +1436,24 @@ if __name__ == "__main__":
 - ✅ Documentation updated
 - ✅ Team trained
 
+#### Phase 6 Gate Criteria
+- [ ] Security review completed: no secrets in logs, credentials in env only
+- [ ] Monitoring dashboard operational: investigation duration, tool failures, token usage
+- [ ] Alerts configured: >10% failure rate, API errors, session cleanup failures
+- [ ] Documentation updated: README, CLAUDE.md, runbook for operators
+- [ ] Legacy code moved to `legacy/` directory with deprecation notice
+- [ ] **Production smoke tests**: 5 real investigations complete successfully
+- [ ] **Rollback verified**: Can switch back to `main_legacy.py` within 5 minutes
+- [ ] Team trained on new architecture and troubleshooting
+
+**Gate Decision:** All criteria must pass for full production cutover.
+
+**Post-Cutover (30-day validation period):**
+- [ ] Monitor failure rate stays below 5%
+- [ ] No critical bugs reported
+- [ ] Token costs within expected range ($0.10-0.50/investigation)
+- [ ] After 30 days: Delete `legacy/` directory
+
 ---
 
 ## Custom Tools & MCP Design
@@ -1354,6 +1465,9 @@ if __name__ == "__main__":
 3. **Result Truncation**: Limit response sizes to avoid context bloat
 4. **Async First**: All tools are async for performance
 5. **Schema Validation**: Use type hints for automatic validation
+6. **Sync-to-Async Strategy**: Use `asyncio.to_thread()` to wrap existing synchronous utilities (Decision: 2026-02-13)
+
+> **DECISION**: MCP tools will use `asyncio.to_thread()` to wrap synchronous calls to `datadog_api.py` and `github_helper.py`. This preserves the stable, tested utility code while maintaining event loop responsiveness. Rationale: Low-traffic MCP server, existing code is production-proven.
 
 ### Tool Design Pattern
 
@@ -1383,8 +1497,8 @@ async def tool_name_impl(args: dict[str, Any]) -> dict[str, Any]:
                 "is_error": True
             }
 
-        # 2. Call existing utility
-        result = await some_utility.do_work(required_param)
+        # 2. Call existing utility (wrapped with asyncio.to_thread for sync code)
+        result = await asyncio.to_thread(some_utility.do_work, required_param)
 
         # 3. Format response (truncate if needed)
         formatted = format_result(result, max_size=50)
@@ -1479,6 +1593,22 @@ files/
 - Easy to debug (inspect files manually)
 - Results persist in session directory
 
+> **DECISION (2026-02-13)**: Inter-subagent data schemas will use existing dataclass patterns from the current codebase.
+>
+> **Reuse these existing models:**
+> - `LogEntry` - Individual log records from DataDog
+> - `SearchResult` - Aggregated search results with unique_services, unique_efilogids
+> - `DeploymentInfo` - Deployment correlation data
+> - `CommitInfo`, `FileChange`, `PullRequestInfo` - GitHub data
+>
+> **New models to add (following same pattern):**
+> - `DataDogFindingsSummary` - Wrapper for datadog_findings/summary.json
+> - `DeploymentFindingsSummary` - Wrapper for deployment_findings/summary.json
+> - `CodeAnalysisSummary` - Wrapper for code_findings/summary.json
+>
+> **Serialization:** Use `dataclasses.asdict()` for writing, reconstruct on read.
+> This maintains consistency with existing code and leverages tested patterns.
+
 ### Subagent Prompt Engineering
 
 **Effective subagent prompts include:**
@@ -1501,17 +1631,31 @@ files/
 
 ### Session Structure
 
+> **DECISION (2026-02-13)**: Each session is fully self-contained with all findings inside the session directory. This ensures:
+> - Complete isolation between investigations
+> - Easy archival (zip entire session dir)
+> - No cross-session contamination
+> - Simple cleanup (delete session dir)
+
 ```
 logs/
 └── session_20260212_143056/
     ├── transcript.txt              # Human-readable conversation
     ├── tool_calls.jsonl            # Structured tool usage log
     ├── investigation_report.md     # Final report
-    └── files/                      # Subagent findings
+    └── files/                      # Subagent findings (session-scoped)
         ├── datadog_findings/
+        │   ├── summary.json
+        │   └── {service}_logs.json
         ├── deployment_findings/
+        │   ├── summary.json
+        │   └── {service}_deployments.json
         └── code_findings/
+            ├── summary.json
+            └── {service}_analysis.json
 ```
+
+**Note:** Subagent prompts must use session-relative paths (e.g., `files/datadog_findings/summary.json`), and the session manager will set the working directory appropriately.
 
 ### Transcript Format
 
@@ -1798,7 +1942,29 @@ If critical issues in production:
 2. Investigate issues in new system offline
 3. Fix and re-deploy when ready
 
-Keep legacy system for 1 month after cutover.
+> **DECISION (2026-02-13)**: Legacy code retention strategy:
+>
+> **During Migration (Phase 1-5):**
+> - Rename legacy files with `_legacy` suffix in `agents/` directory
+> - Keep `main_legacy.py` as alternate entry point
+>
+> **At Cutover (Phase 6):**
+> - Move all legacy files to `legacy/` directory
+> - Structure: `legacy/agents/`, `legacy/main_legacy.py`
+> - Add `legacy/README.md` noting deprecation date
+>
+> **Post-Cutover:**
+> - Keep `legacy/` directory for **30 days** after production cutover
+> - Set calendar reminder for removal date
+> - Delete `legacy/` directory after validation period
+> - Git history remains available for reference if ever needed
+>
+> **Files to archive:**
+> - `agents/main_agent.py` → `legacy/agents/main_agent.py`
+> - `agents/datadog_retriever.py` → `legacy/agents/datadog_retriever.py`
+> - `agents/deployment_checker.py` → `legacy/agents/deployment_checker.py`
+> - `agents/code_checker.py` → `legacy/agents/code_checker.py`
+> - `agents/exception_analyzer.py` → `legacy/agents/exception_analyzer.py`
 
 ---
 
@@ -1956,6 +2122,28 @@ Create fixtures for common scenarios:
    - Development: `bypassPermissions` for testing
    - Production: `acceptEdits` to prompt for destructive operations
 
+   > **DECISION (2026-02-13)**: Permission mode will be configurable via `PERMISSION_MODE` environment variable.
+   >
+   > **Configuration:**
+   > ```bash
+   > # Default (CLI usage) - no prompts, tool is read-only for external systems
+   > PERMISSION_MODE=bypassPermissions
+   >
+   > # Stricter mode for API/web interfaces or shared environments
+   > PERMISSION_MODE=acceptEdits
+   > ```
+   >
+   > **Rationale for `bypassPermissions` as default:**
+   > - External system access is read-only (DataDog queries, GitHub reads)
+   > - Local writes are confined to session directories (`logs/session_*/`)
+   > - CLI users explicitly invoke the tool and trust it
+   > - Prompts would interrupt automated/batch investigations
+   >
+   > **When to use `acceptEdits`:**
+   > - Multi-tenant environments
+   > - Web/API interfaces where users may not fully trust the tool
+   > - Compliance requirements for audit trails
+
 3. **Log Redaction**
    - Sensitive fields: efilogid (contains user data), customer IDs
    - Redact in transcripts but keep in tool_calls.jsonl for debugging
@@ -1967,10 +2155,34 @@ Create fixtures for common scenarios:
    - Subagents: `haiku` for search, `sonnet` for analysis
    - Estimated cost per investigation: $0.10-0.50
 
+   > **DECISION (2026-02-13)**: Model selection will be configurable per-subagent via environment variables with sensible defaults.
+   >
+   > **Defaults in code:**
+   > - `LEAD_AGENT_MODEL=opus`
+   > - `DATADOG_INVESTIGATOR_MODEL=haiku`
+   > - `DEPLOYMENT_ANALYZER_MODEL=haiku`
+   > - `CODE_REVIEWER_MODEL=sonnet`
+   >
+   > **Override via .env:**
+   > ```bash
+   > # Override any subagent model
+   > DATADOG_INVESTIGATOR_MODEL=sonnet  # Upgrade if haiku misses patterns
+   > CODE_REVIEWER_MODEL=opus           # For complex codebases
+   > ```
+   >
+   > This allows tuning based on real-world metrics without code changes.
+
 2. **Rate Limiting**
    - DataDog: 300 req/hour
    - GitHub: 5000 req/hour
    - Implement backoff in MCP tools
+
+   > **DECISION (2026-02-13)**: MCP tools will handle rate limits using `asyncio.sleep()` for async-friendly waiting. Pattern:
+   > 1. Catch `DataDogRateLimitError` from sync utility (via `asyncio.to_thread`)
+   > 2. Extract `retry_after_seconds` from exception
+   > 3. Use `await asyncio.sleep(retry_after_seconds)` to wait
+   > 4. Retry the operation once
+   > This keeps the event loop responsive during rate limit waits.
 
 3. **Result Truncation**
    - Limit log results to 50 entries per query
@@ -2001,7 +2213,35 @@ Create fixtures for common scenarios:
 1. **Graceful Degradation**
    - If DataDog fails: Return empty results, continue with deployment check
    - If GitHub fails: Skip code analysis, provide partial report
-   - If subagent fails: Retry once, then continue
+   - If subagent fails: Apply retry policy based on failure type
+
+   > **DECISION (2026-02-13)**: Configurable retry counts per failure type.
+   >
+   > **Environment Variables (with defaults):**
+   > ```bash
+   > # MCP tool returns is_error: true (often transient)
+   > TOOL_ERROR_RETRIES=1
+   >
+   > # Subagent exceeds time limit (unlikely to succeed on retry)
+   > TIMEOUT_RETRIES=0
+   >
+   > # Findings file has invalid schema (prompt issue, not transient)
+   > SCHEMA_ERROR_RETRIES=0
+   >
+   > # Subagent timeout in seconds
+   > SUBAGENT_TIMEOUT_SECONDS=120
+   > ```
+   >
+   > **Failure Type Detection:**
+   > - **Tool error**: Task result contains `is_error: true` from MCP tool
+   > - **Timeout**: Task exceeds `SUBAGENT_TIMEOUT_SECONDS`
+   > - **Schema error**: Findings file exists but fails dataclass validation
+   > - **Partial success**: Some expected fields missing but file is valid JSON
+   >
+   > **Behavior:**
+   > - After exhausting retries, continue with partial data
+   > - Log failure details to `tool_calls.jsonl` for debugging
+   > - Include failure summary in final report
 
 2. **User Communication**
    - Always explain what went wrong
@@ -2009,7 +2249,7 @@ Create fixtures for common scenarios:
    - Provide session logs for debugging
 
 3. **Automatic Recovery**
-   - Retry MCP tools on transient failures
+   - Retry MCP tools on transient failures (per retry config)
    - Resume sessions if interrupted
    - Auto-cleanup old sessions
 
