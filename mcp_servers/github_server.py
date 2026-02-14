@@ -26,6 +26,7 @@ from utils.github_helper import (
     FileChange,
 )
 from utils.logger import get_logger
+from claude_agent_sdk import tool, create_sdk_mcp_server
 
 logger = get_logger(__name__)
 
@@ -516,3 +517,64 @@ def set_github_helper(helper: GitHubHelper):
     """
     global _github_helper
     _github_helper = helper
+
+
+# Create SDK-wrapped versions for MCP server
+search_commits_sdk_tool = tool(
+    name="search_commits",
+    description="Search commits in a GitHub repository within a time range. Use this to find deployments or code changes in a specific time window.",
+    input_schema={
+        "owner": str,
+        "repo": str,
+        "since": str,
+        "until": str,
+        "author": str,
+        "path": str,
+    }
+)(search_commits_tool)
+
+get_file_content_sdk_tool = tool(
+    name="get_file_content",
+    description="Get the content of a file at a specific commit. Use this to review code at the exact version that was deployed.",
+    input_schema={
+        "owner": str,
+        "repo": str,
+        "file_path": str,
+        "commit_sha": str,
+    }
+)(get_file_content_tool)
+
+get_pr_files_sdk_tool = tool(
+    name="get_pr_files",
+    description="Get the list of files changed in a pull request. Use this to see what was modified in a PR.",
+    input_schema={
+        "owner": str,
+        "repo": str,
+        "pr_number": int,
+    }
+)(get_pr_files_tool)
+
+compare_commits_sdk_tool = tool(
+    name="compare_commits",
+    description="Compare two commits to see what changed. Use this to generate a diff between a deployed version and its parent.",
+    input_schema={
+        "owner": str,
+        "repo": str,
+        "base": str,
+        "head": str,
+        "file_path": str,
+    }
+)(compare_commits_tool)
+
+
+# Export MCP server for use by lead agent
+GITHUB_MCP_SERVER = create_sdk_mcp_server(
+    name="github",
+    version="1.0.0",
+    tools=[
+        search_commits_sdk_tool,
+        get_file_content_sdk_tool,
+        get_pr_files_sdk_tool,
+        compare_commits_sdk_tool,
+    ]
+)

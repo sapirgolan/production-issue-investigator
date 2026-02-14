@@ -25,6 +25,7 @@ from utils.datadog_api import (
 )
 from utils.logger import get_logger
 from utils.stack_trace_parser import StackTraceParser, ParsedStackTrace
+from claude_agent_sdk import tool, create_sdk_mcp_server
 
 logger = get_logger(__name__)
 
@@ -395,3 +396,45 @@ def set_stack_parser(parser: StackTraceParser):
     """
     global _stack_parser
     _stack_parser = parser
+
+
+# Create SDK-wrapped versions for MCP server
+search_logs_sdk_tool = tool(
+    name="search_logs",
+    description="Search DataDog logs with query and time filters. Use this to find logs matching specific criteria like error messages, service names, or identifiers.",
+    input_schema={
+        "query": str,
+        "from_time": str,
+        "to_time": str,
+        "limit": int,
+    }
+)(search_logs_tool)
+
+get_logs_by_efilogid_sdk_tool = tool(
+    name="get_logs_by_efilogid",
+    description="Get all logs for a specific session ID (efilogid). Use this to retrieve the complete log trail for a user session.",
+    input_schema={
+        "efilogid": str,
+        "time_window": str,
+    }
+)(get_logs_by_efilogid_tool)
+
+parse_stack_trace_sdk_tool = tool(
+    name="parse_stack_trace",
+    description="Extract file paths and exceptions from Java/Kotlin stack traces. Use this to identify which source files are involved in an error.",
+    input_schema={
+        "stack_trace_text": str,
+    }
+)(parse_stack_trace_tool)
+
+
+# Export MCP server for use by lead agent
+DATADOG_MCP_SERVER = create_sdk_mcp_server(
+    name="datadog",
+    version="1.0.0",
+    tools=[
+        search_logs_sdk_tool,
+        get_logs_by_efilogid_sdk_tool,
+        parse_stack_trace_sdk_tool,
+    ]
+)

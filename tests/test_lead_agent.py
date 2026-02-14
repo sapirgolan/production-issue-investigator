@@ -875,8 +875,8 @@ class TestLeadAgentMCPServers(unittest.TestCase):
              patch("agents.lead_agent.SessionManager") as MockSessionManager, \
              patch("agents.lead_agent.SubagentTracker") as MockTracker, \
              patch("agents.lead_agent.create_hook_matchers") as mock_create_hooks, \
-             patch("agents.lead_agent.datadog_mcp_server") as mock_datadog_server, \
-             patch("agents.lead_agent.github_mcp_server") as mock_github_server:
+             patch("agents.lead_agent.DATADOG_MCP_SERVER") as mock_datadog_server, \
+             patch("agents.lead_agent.GITHUB_MCP_SERVER") as mock_github_server:
 
             mock_config = MagicMock()
             mock_get_config.return_value = mock_config

@@ -29,34 +29,11 @@ from agents.subagent_definitions import (
     DEPLOYMENT_ANALYZER,
     CODE_REVIEWER,
 )
-# Import MCP server tool functions for registration
-from mcp_servers import datadog_server, github_server
+# Import MCP server instances (SDK-wrapped)
+from mcp_servers.datadog_server import DATADOG_MCP_SERVER
+from mcp_servers.github_server import GITHUB_MCP_SERVER
 
 logger = get_logger(__name__)
-
-# MCP Server definitions - these are placeholder objects representing MCP server configuration
-# They will be used by ClaudeAgentOptions.mcp_servers to register the tools
-# In production, these would be actual MCP server instances
-datadog_mcp_server = {
-    "name": "datadog",
-    "version": "1.0.0",
-    "tools": [
-        datadog_server.search_logs_tool,
-        datadog_server.get_logs_by_efilogid_tool,
-        datadog_server.parse_stack_trace_tool,
-    ]
-}
-
-github_mcp_server = {
-    "name": "github",
-    "version": "1.0.0",
-    "tools": [
-        github_server.search_commits_tool,
-        github_server.get_file_content_tool,
-        github_server.get_pr_files_tool,
-        github_server.compare_commits_tool,
-    ]
-}
 
 LEAD_AGENT_PROMPT = """You are a Senior SRE and Production Investigation Expert.
 
@@ -219,10 +196,10 @@ class LeadAgent:
         # Setup hooks
         hooks = create_hook_matchers(self.tracker)
 
-        # Setup MCP servers
+        # Setup MCP servers (SDK-wrapped instances)
         mcp_servers = {
-            "datadog": datadog_mcp_server,
-            "github": github_mcp_server,
+            "datadog": DATADOG_MCP_SERVER,
+            "github": GITHUB_MCP_SERVER,
         }
 
         # Define subagents
